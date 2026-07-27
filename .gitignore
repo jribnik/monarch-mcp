@@ -1,0 +1,19 @@
+# deps / vendored audit clone
+.venv/
+_audit/
+__pycache__/
+*.pyc
+
+# secrets/session never live here (they're in ~/.monarch-mcp), but just in case:
+*.mmsession
+*.key
+.monarch-mcp/
+
+# logs may contain account/merchant data
+*.log
+
+# one-off cleanup scripts contain personal financial data (payees, amounts,
+# merchant ids) — keep them local, never publish
+scratch_*.py
+scratchpad*
+*.json
