@@ -10,8 +10,9 @@ login), and the interactive flow breaks in two places:
    the 403 handler in `authentication_service` falls straight through to
    `raise AuthenticationError("Login failed with status 403")`. So callers
    catching `RequireMFAException` (like `interactive_login()`) never get a chance
-   to prompt for the code. As @… noted, the TOTP path raises `MFARequiredError`,
-   which `interactive_login` also doesn't catch — same root cause, different code.
+   to prompt for the code. As @kadimgh noted, the TOTP path raises
+   `MFARequiredError`, which `interactive_login` also doesn't catch — same root
+   cause, different code.
 
 2. **6-digit ≠ always email OTP.** `_multi_factor_authenticate` decides between
    `email_otp` and `totp` purely by `len(code) == 6 and code.isdigit()`. TOTP
