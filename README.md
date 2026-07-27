@@ -36,6 +36,31 @@ so the audited code stays untouched:
   (`EMAIL_OTP_REQUIRED`), which the library surfaces as a bare 403; `auth.py`
   routes it into the code prompt.
 
+## When the API drifts (schema recovery)
+
+Monarch's unofficial GraphQL schema changes without notice, so library queries
+break with a generic `"Something went wrong while processing"` error. Introspection
+is **disabled** for non-admin tokens, so you can't just dump the schema. Recover it
+with this ladder, cheapest first:
+
+1. **Field-probe the live API.** Send a query selecting one candidate field and see
+   whether it's accepted or rejected; the error's `locations: [{line, column}]`
+   points straight at the offending field. Bisect a broken query this way to find
+   exactly which field/arg the server no longer accepts.
+2. **Write-then-read-back.** Create an object with a mutation whose input you know,
+   then read it back — this reveals the *read* schema's field names and nesting
+   (how we learned rules store criteria in `merchantNameCriteria` /
+   `originalStatementCriteria`, not `merchantCriteria`).
+3. **Capture a HAR (authoritative).** In the web app: DevTools → Network → filter
+   `graphql` → click the relevant page → right-click → *Save all as HAR with
+   content*. The captured request carries the exact operation name, query text,
+   fields, and argument shape the app itself uses. This is the ground truth for
+   what a dead field *became*.
+4. **Verify the fix end-to-end.** Edit the vendored copy under `_audit/` and run it
+   with `PYTHONPATH=_audit` against a live account — the venv installs the pinned
+   package separately, so this is the only way to exercise your edits before
+   sending them upstream.
+
 ## Log in (once)
 
 Run the interactive login **yourself** in a terminal. Your password is sent only
