@@ -126,6 +126,30 @@ async def get_transaction_details(transaction_id: str) -> dict[str, Any]:
     return await _mm().get_transaction_details(transaction_id)
 
 
+@mcp.tool()
+async def get_recurring_transactions(
+    start_date: Optional[str] = None, end_date: Optional[str] = None
+) -> dict[str, Any]:
+    """
+    List recurring transaction streams (the Recurring tab) with merchant, amount,
+    frequency, and account for each. Dates are 'YYYY-MM-DD'.
+
+    Bank re-links periodically spawn a fresh merchant id for an existing recurring
+    charge (e.g. a card reissue), splitting one subscription/bill into two streams
+    under near-identical names. To find these: group streams by merchant name
+    (case-insensitively) or by (amount, frequency, category) and inspect any group
+    with more than one entry -- but confirm they're really the same thing before
+    merging (different services can coincidentally share a price/category).
+    To merge, rename every transaction under the duplicate merchant id to the
+    canonical merchant's exact name via update_transaction(merchant_name=...) --
+    Monarch collapses transactions under a merchant whose name matches exactly, so
+    renaming == merging. Find those transactions with get_transactions(search=...).
+    """
+    return await _mm().get_recurring_transactions(
+        start_date=start_date, end_date=end_date
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Write tools
 # --------------------------------------------------------------------------- #
@@ -181,6 +205,20 @@ async def set_transaction_tags(
 async def create_tag(name: str, color: str) -> dict[str, Any]:
     """Create a new transaction tag. color is a hex string like '#22aa55'."""
     return await _mm().create_transaction_tag(name=name, color=color)
+
+
+@mcp.tool()
+async def mark_stream_as_not_recurring(stream_id: str) -> dict[str, Any]:
+    """
+    Dismiss a recurring transaction stream (get its id from get_recurring_transactions).
+    Use when a subscription was cancelled but old transactions still get grouped as
+    recurring, or one-time purchases got mistakenly detected as a pattern. NOT for
+    duplicate streams caused by a merchant split -- merge those instead (see
+    get_recurring_transactions' docstring); once merged, the duplicate stream
+    disappears on its own without needing this.
+    """
+    ok = await _mm().mark_stream_as_not_recurring(stream_id=stream_id)
+    return {"success": ok}
 
 
 if __name__ == "__main__":
