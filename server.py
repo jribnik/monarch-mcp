@@ -15,8 +15,17 @@ Wraps `monarchmoney-enhanced`, pinned to an audited commit (see README).
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any, Optional
+
+# Rule tools (create/preview/get_transaction_rules) need the patched library at
+# _audit -- the pip-installed package silently drops merchantNameCriteria /
+# originalStatementCriteria (both on create AND preview) and several rule
+# actions, and its get_transaction_rules read fragment doesn't request those
+# criteria fields either. See monarch-mcp memory. _audit is a strict superset
+# (same pinned commit + additive fixes), so prefer it for everything.
+sys.path.insert(0, str(Path(__file__).resolve().parent / "_audit"))
 
 from mcp.server.fastmcp import FastMCP
 from monarchmoney import MonarchMoney
@@ -205,6 +214,101 @@ async def set_transaction_tags(
 async def create_tag(name: str, color: str) -> dict[str, Any]:
     """Create a new transaction tag. color is a hex string like '#22aa55'."""
     return await _mm().create_transaction_tag(name=name, color=color)
+
+
+@mcp.tool()
+async def get_transaction_rules() -> dict[str, Any]:
+    """
+    List all transaction rules (auto-categorization rules), in priority order.
+    Each rule's criteria (merchant_criteria, merchant_name_criteria,
+    original_statement_criteria, amount_criteria, category_ids, account_ids) and
+    actions (set_category_action, set_merchant_action, etc.) are returned in full.
+    Use this before creating a new rule to check for an existing/overlapping one.
+    """
+    return await _mm().get_transaction_rules()
+
+
+@mcp.tool()
+async def preview_transaction_rule(
+    merchant_name_criteria: Optional[list[dict[str, str]]] = None,
+    original_statement_criteria: Optional[list[dict[str, str]]] = None,
+    amount_criteria: Optional[dict[str, Any]] = None,
+    category_ids: Optional[list[str]] = None,
+    account_ids: Optional[list[str]] = None,
+    set_category_action: Optional[str] = None,
+) -> dict[str, Any]:
+    """
+    Preview which EXISTING transactions a candidate rule would match and what it
+    would set on them, WITHOUT creating the rule or changing anything. ALWAYS call
+    this before create_transaction_rule and sanity-check totalCount/results against
+    what you actually intend to match -- rule criteria can silently match the wrong
+    set (e.g. amount_criteria's isExpense flag: True = the amount interpreted as a
+    real expense/debit, False = a credit/incoming-payment amount; getting this
+    backwards is an easy, quiet mistake -- verified via a live HAR capture 2026-09).
+
+    - merchant_name_criteria: e.g. [{"operator": "contains", "value": "Capital One"}]
+      (this, not merchant_criteria, is what the UI actually uses for name matching)
+    - original_statement_criteria: same shape, matches raw plaidName/statement text
+    - amount_criteria: e.g. {"operator": "gt", "isExpense": False, "value": 0}
+      (isExpense False = matches positive/credit amounts; True = matches real
+      expenses regardless of raw sign)
+    - category_ids / account_ids: restrict to transactions currently in these
+      categories/accounts
+    - set_category_action: the category_id the rule would assign (for preview
+      display only -- pass the id from get_categories)
+    """
+    return await _mm().preview_transaction_rule(
+        merchant_name_criteria=merchant_name_criteria,
+        original_statement_criteria=original_statement_criteria,
+        amount_criteria=amount_criteria,
+        category_ids=category_ids,
+        account_ids=account_ids,
+        set_category_action=set_category_action,
+    )
+
+
+@mcp.tool()
+async def create_transaction_rule(
+    merchant_name_criteria: Optional[list[dict[str, str]]] = None,
+    original_statement_criteria: Optional[list[dict[str, str]]] = None,
+    amount_criteria: Optional[dict[str, Any]] = None,
+    category_ids: Optional[list[str]] = None,
+    account_ids: Optional[list[str]] = None,
+    set_category_action: Optional[str] = None,
+    apply_to_existing_transactions: bool = False,
+) -> dict[str, Any]:
+    """
+    Create a new auto-categorization rule. ALWAYS call preview_transaction_rule
+    with the identical criteria first and confirm the match set is what you
+    intend -- a wrong rule silently miscategorizes every future matching
+    transaction, which is much harder to notice than a single bad transaction.
+
+    Criteria/actions use the same shapes as preview_transaction_rule. Set
+    apply_to_existing_transactions=True only if you also want it retroactively
+    applied to every matching historical transaction (defaults to False --
+    forward-looking only, which is usually what you want if you've already
+    fixed the historical ones by hand).
+    """
+    return await _mm().create_transaction_rule(
+        merchant_name_criteria=merchant_name_criteria,
+        original_statement_criteria=original_statement_criteria,
+        amount_criteria=amount_criteria,
+        category_ids=category_ids,
+        account_ids=account_ids,
+        set_category_action=set_category_action,
+        apply_to_existing_transactions=apply_to_existing_transactions,
+    )
+
+
+@mcp.tool()
+async def delete_transaction_rule(rule_id: str) -> dict[str, Any]:
+    """
+    Delete a transaction rule by id (from get_transaction_rules). Note: the API's
+    `deleted` flag is unreliable (returns False even on success; only an actual
+    failure raises an error) -- verify by calling get_transaction_rules again.
+    """
+    ok = await _mm().delete_transaction_rule(rule_id)
+    return {"deleted_flag": ok}
 
 
 @mcp.tool()
