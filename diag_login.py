@@ -3,7 +3,7 @@
 Diagnostic: reproduce the Monarch login POST and print the RAW response so we can
 see why it's returning 403 (error_code / detail). Credentials are not stored.
 
-    ~/monarch-mcp/.venv/bin/python ~/monarch-mcp/diag_login.py
+    ~/src/monarch-mcp/.venv/bin/python ~/src/monarch-mcp/diag_login.py
 """
 from __future__ import annotations
 

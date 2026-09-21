@@ -4,7 +4,7 @@ One-time interactive login for the Monarch MCP server.
 
 Run this yourself in a terminal:
 
-    ~/monarch-mcp/.venv/bin/python ~/monarch-mcp/auth.py
+    ~/src/monarch-mcp/.venv/bin/python ~/src/monarch-mcp/auth.py
 
 You will be prompted for your Monarch email, password, and (if enabled) your
 two-factor code. Your credentials are sent only to Monarch's own API and are

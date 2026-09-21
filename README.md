@@ -13,11 +13,13 @@ It wraps the unofficial GraphQL API via
 
 ```bash
 # One-time: create the venv and install pinned deps (already done in this repo)
-python3.11 -m venv ~/monarch-mcp/.venv
-~/monarch-mcp/.venv/bin/pip install \
+python3.11 -m venv ~/src/monarch-mcp/.venv
+~/src/monarch-mcp/.venv/bin/pip install \
   "git+https://github.com/keithah/monarchmoney-enhanced@159d36e7ea07dbdc4b3a28193d89ef5c2c36f548" \
-  "mcp[cli]>=1.2.0" \
-  "gql<4"          # the library isn't compatible with gql 4.x (see Compatibility)
+  "mcp[cli]>=1.2.0,<2" \
+  "gql<4"          # neither pin is optional: mcp 2.x renamed FastMCP -> MCPServer
+                    # and changed the API (server.py is 1.x code); gql 4.x removed
+                    # what the library's "enhanced" GraphQL path calls (see Compatibility)
 ```
 
 ### Compatibility fixes (in `config.py`, not edits to the library)
@@ -67,7 +69,7 @@ Run the interactive login **yourself** in a terminal. Your password is sent only
 to Monarch and is never stored or echoed:
 
 ```bash
-~/monarch-mcp/.venv/bin/python ~/monarch-mcp/auth.py
+~/src/monarch-mcp/.venv/bin/python ~/src/monarch-mcp/auth.py
 ```
 
 This saves an **encrypted** session to `~/.monarch-mcp/session.mmsession` so the
@@ -77,7 +79,7 @@ expires (you'll see auth errors from the tools).
 ## Register with Claude Code
 
 ```bash
-claude mcp add monarch -- ~/monarch-mcp/.venv/bin/python ~/monarch-mcp/server.py
+claude mcp add monarch -- ~/src/monarch-mcp/.venv/bin/python ~/src/monarch-mcp/server.py
 ```
 
 Then restart Claude Code so it connects. Ask things like:
