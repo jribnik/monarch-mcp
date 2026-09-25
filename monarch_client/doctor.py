@@ -102,12 +102,15 @@ def _check_catalog_drift() -> None:
 
     catalog_ops = catalog.get("operations", {})
     for op_name, entry in sorted(operations.PROVENANCE.items()):
+        vendored_hash = entry.get("catalog_query_hash")
+        if vendored_hash is None:
+            print(f"[skip] {op_name}: vendored as a deliberate subset, not a verbatim export")
+            continue
         catalog_entry = catalog_ops.get(op_name)
         if catalog_entry is None:
             print(f"[warn] {op_name}: not in current catalog (removed or renamed?)")
             continue
         live_hash = catalog_entry.get("query_hash")
-        vendored_hash = entry.get("catalog_query_hash")
         if live_hash == vendored_hash:
             print(f"[ok]   {op_name}: catalog hash unchanged since vendoring")
         else:
