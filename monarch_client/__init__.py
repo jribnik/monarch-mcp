@@ -6,18 +6,20 @@ Built to replace `monarchmoney-enhanced` (vendored under monarch-mcp's
 _audit/, abandoned upstream) with something monarch-mcp fully owns. Three
 pieces, kept separate on purpose:
 
-  - auth.py: obtains fresh HTTP auth material from api-recon's saved,
-    encrypted browser session (`recon export-session`) -- never a password
-    login of its own.
+  - auth.py: a pure reader of a small JSON file (cookies/headers) that
+    api-recon produces via `recon export-session`, run separately by a
+    human -- never a password login of its own, and never a runtime
+    dependency on api-recon or the `recon` binary itself.
   - operations/: verbatim query/mutation text vendored from api-recon's
     operation catalog (`recon export-ops`), committed here and reviewed
-    like any other dependency.
+    like any other dependency -- same "consume a produced artifact, never
+    the tool that produced it" relationship as auth.py's file.
   - transport.py: POSTs a named operation with those two ingredients to
     api.monarch.com and turns GraphQL-level errors into typed exceptions.
 
 This package has zero imports from the rest of monarch-mcp (server.py,
-config.py) -- it can be lifted into its own repo later with a `git mv` if a
-second consumer ever shows up.
+config.py) and no runtime dependency on api-recon -- it can be lifted into
+its own repo later with a `git mv` if a second consumer ever shows up.
 
 Run `python -m monarch_client.doctor` to check that auth, the network path,
 and a vendored operation all work end to end.

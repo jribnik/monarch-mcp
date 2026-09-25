@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
-import time
 
 import pytest
 
@@ -36,152 +34,45 @@ def _write_cache(path, *, cookies=None, headers=None, expires_at=None, exported_
     os.chmod(path, 0o600)
 
 
-class TestResolveReconBin:
-    def test_env_override_wins(self, monkeypatch):
-        monkeypatch.setenv("MONARCH_RECON_BIN", "/custom/recon")
-        assert auth._resolve_recon_bin() == "/custom/recon"
-
-    def test_falls_back_to_path(self, monkeypatch):
-        monkeypatch.delenv("MONARCH_RECON_BIN", raising=False)
-        monkeypatch.setattr(auth.shutil, "which", lambda name: "/usr/local/bin/recon")
-        assert auth._resolve_recon_bin() == "/usr/local/bin/recon"
-
-    def test_raises_when_nothing_found(self, monkeypatch, tmp_path):
-        monkeypatch.delenv("MONARCH_RECON_BIN", raising=False)
-        monkeypatch.setattr(auth.shutil, "which", lambda name: None)
-        # Redirect Path.home() so the hardcoded ~/src/api-recon/.venv/bin/recon
-        # fallback resolves to a location that can't possibly exist, without
-        # touching Path.exists globally.
-        monkeypatch.setattr(auth.Path, "home", classmethod(lambda cls: tmp_path))
-        with pytest.raises(MonarchAuthError, match="could not find"):
-            auth._resolve_recon_bin()
-
-
 class TestLoad:
-    def test_fresh_cache_is_used_without_refresh(self, isolated_cache, monkeypatch):
-        _write_cache(isolated_cache, cookies={"session_id": "fresh"})
+    """auth.py is a pure file reader -- no subprocess, no refresh, no
+    `recon` binary knowledge at all. See auth.py's module docstring for
+    why: an earlier version shelled out to `recon export-session` on a
+    staleness heuristic, making a long-running MCP server depend on a
+    working api-recon checkout indefinitely."""
 
-        def _boom():
-            raise AssertionError("should not refresh a fresh cache")
-
-        monkeypatch.setattr(auth, "_run_recon_export", _boom)
-
+    def test_reads_existing_cache(self, isolated_cache):
+        _write_cache(isolated_cache, cookies={"session_id": "abc"})
         material = auth.load()
-        assert material.cookies == {"session_id": "fresh"}
+        assert material.cookies == {"session_id": "abc"}
         assert material.headers == {"User-Agent": "test-ua"}
 
-    def test_stale_cache_triggers_refresh(self, isolated_cache, monkeypatch):
-        _write_cache(isolated_cache, cookies={"session_id": "stale"})
-        old = time.time() - auth.AUTH_CACHE_MAX_AGE_SECONDS - 60
-        os.utime(isolated_cache, (old, old))
-
-        calls = []
-
-        def _fake_refresh():
-            calls.append(1)
-            _write_cache(isolated_cache, cookies={"session_id": "refreshed"})
-
-        monkeypatch.setattr(auth, "_run_recon_export", _fake_refresh)
-
-        material = auth.load()
-        assert calls == [1]
-        assert material.cookies == {"session_id": "refreshed"}
-
-    def test_missing_cache_triggers_refresh(self, isolated_cache, monkeypatch):
+    def test_missing_file_raises_with_exact_export_command(self, isolated_cache):
         assert not isolated_cache.exists()
+        with pytest.raises(MonarchAuthError) as exc_info:
+            auth.load()
+        message = str(exc_info.value)
+        assert "recon export-session monarch --api-host api.monarch.com" in message
+        assert str(isolated_cache) in message
 
-        def _fake_refresh():
-            _write_cache(isolated_cache, cookies={"session_id": "new"})
-
-        monkeypatch.setattr(auth, "_run_recon_export", _fake_refresh)
-
-        material = auth.load()
-        assert material.cookies == {"session_id": "new"}
-
-    def test_force_refresh_ignores_fresh_cache(self, isolated_cache, monkeypatch):
-        _write_cache(isolated_cache, cookies={"session_id": "old"})
-        calls = []
-
-        def _fake_refresh():
-            calls.append(1)
-            _write_cache(isolated_cache, cookies={"session_id": "forced"})
-
-        monkeypatch.setattr(auth, "_run_recon_export", _fake_refresh)
-
-        material = auth.load(force_refresh=True)
-        assert calls == [1]
-        assert material.cookies == {"session_id": "forced"}
-
-    def test_corrupt_cache_falls_through_to_refresh(self, isolated_cache, monkeypatch):
+    def test_corrupt_file_raises_naming_the_fix(self, isolated_cache):
         isolated_cache.write_text("not json")
-
-        def _fake_refresh():
-            _write_cache(isolated_cache, cookies={"session_id": "recovered"})
-
-        monkeypatch.setattr(auth, "_run_recon_export", _fake_refresh)
-
-        material = auth.load()
-        assert material.cookies == {"session_id": "recovered"}
-
-    def test_refresh_failure_raises_auth_error_naming_the_fix(
-        self, isolated_cache, monkeypatch
-    ):
-        def _fake_refresh():
-            raise MonarchAuthError("boom\nrun: recon login monarch")
-
-        monkeypatch.setattr(auth, "_run_recon_export", _fake_refresh)
-
-        with pytest.raises(MonarchAuthError, match="recon login monarch"):
+        with pytest.raises(MonarchAuthError, match="recon export-session"):
             auth.load()
 
+    def test_malformed_file_missing_cookies_key_raises(self, isolated_cache):
+        isolated_cache.write_text(json.dumps({"headers": {}}))
+        with pytest.raises(MonarchAuthError, match="malformed"):
+            auth.load()
 
-class TestRunReconExport:
-    def test_nonzero_exit_raises_with_stderr(self, isolated_cache, monkeypatch):
-        monkeypatch.setattr(auth, "_resolve_recon_bin", lambda: "/fake/recon")
-
-        def _fake_run(*args, **kwargs):
-            return subprocess.CompletedProcess(
-                args=args, returncode=1, stdout="", stderr="session expired"
-            )
-
-        monkeypatch.setattr(auth.subprocess, "run", _fake_run)
-
-        with pytest.raises(MonarchAuthError, match="session expired"):
-            auth._run_recon_export()
-
-    def test_timeout_raises_auth_error(self, isolated_cache, monkeypatch):
-        monkeypatch.setattr(auth, "_resolve_recon_bin", lambda: "/fake/recon")
-
-        def _fake_run(*args, **kwargs):
-            raise subprocess.TimeoutExpired(cmd="recon", timeout=30)
-
-        monkeypatch.setattr(auth.subprocess, "run", _fake_run)
-
-        with pytest.raises(MonarchAuthError, match="timed out"):
-            auth._run_recon_export()
-
-    def test_exports_the_currently_selected_site(self, isolated_cache, monkeypatch):
-        """Regression test for the incident this module's docstring
-        describes: the site actually passed to `recon export-session` must
-        track MONARCH_CLIENT_SITE, not a hardcoded 'monarch'."""
-        monkeypatch.setenv("MONARCH_CLIENT_SITE", "monarch-sandbox")
-        monkeypatch.setattr(auth, "_resolve_recon_bin", lambda: "/fake/recon")
-
-        captured_cmd = []
-
-        def _fake_run(cmd, **kwargs):
-            captured_cmd.extend(cmd)
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-        monkeypatch.setattr(auth.subprocess, "run", _fake_run)
-
-        auth._run_recon_export()
-
-        assert "export-session" in captured_cmd
-        assert "monarch-sandbox" in captured_cmd
-        assert "monarch" not in captured_cmd  # not even as a substring match via the real site
-        out_idx = captured_cmd.index("--out")
-        assert "monarch-sandbox" in captured_cmd[out_idx + 1]
+    def test_never_shells_out(self, isolated_cache, monkeypatch):
+        """There is no subprocess-capable hook left in this module at all --
+        this test exists to catch a regression that reintroduces one."""
+        _write_cache(isolated_cache, cookies={"session_id": "abc"})
+        assert not hasattr(auth, "subprocess")
+        assert not hasattr(auth, "_run_recon_export")
+        assert not hasattr(auth, "_resolve_recon_bin")
+        auth.load()  # should succeed via a plain file read alone
 
 
 class TestSiteIsolation:
@@ -210,11 +101,7 @@ class TestSiteIsolation:
         _write_cache(real_path, cookies={"session_id": "REAL-ACCOUNT-DO-NOT-TOUCH"})
 
         monkeypatch.setenv("MONARCH_CLIENT_SITE", "monarch-sandbox")
-
-        def _fake_refresh():
-            _write_cache(auth.cache_path(), cookies={"session_id": "sandbox-session"})
-
-        monkeypatch.setattr(auth, "_run_recon_export", _fake_refresh)
+        _write_cache(auth.cache_path(), cookies={"session_id": "sandbox-session"})
 
         material = auth.load()
         assert material.cookies == {"session_id": "sandbox-session"}

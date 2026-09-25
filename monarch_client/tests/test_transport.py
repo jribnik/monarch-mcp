@@ -28,7 +28,7 @@ def reset_http_client():
 
 
 def _install_mock(monkeypatch, handler, *, material=FAKE_MATERIAL):
-    monkeypatch.setattr(auth, "load", lambda **kwargs: material)
+    monkeypatch.setattr(auth, "load", lambda: material)
     transport._http_client = httpx.AsyncClient(
         transport=httpx.MockTransport(handler)
     )
@@ -68,10 +68,13 @@ async def test_graphql_errors_raise_even_with_partial_data(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_auth_failure_refreshes_and_retries_once(monkeypatch):
+async def test_auth_failure_raises_immediately_without_retry(monkeypatch):
+    """auth.py is a pure file reader with no way to refresh itself, so a
+    401/403 must raise on the first call -- retrying would just re-read
+    the identical file and reproduce the identical failure."""
     calls = {"n": 0, "loads": 0}
 
-    def fake_load(**kwargs):
+    def fake_load():
         calls["loads"] += 1
         return FAKE_MATERIAL
 
@@ -79,16 +82,14 @@ async def test_auth_failure_refreshes_and_retries_once(monkeypatch):
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls["n"] += 1
-        if calls["n"] == 1:
-            return httpx.Response(401, json={"errors": [{"message": "unauthorized"}]})
-        return httpx.Response(200, json={"data": {"me": {"id": "1"}}})
+        return httpx.Response(401, json={"errors": [{"message": "unauthorized"}]})
 
     transport._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
-    data = await transport.execute("Common_GetMe", "query {}", {})
-    assert data == {"me": {"id": "1"}}
-    assert calls["n"] == 2
-    assert calls["loads"] == 2  # initial + forced refresh
+    with pytest.raises(MonarchAuthError, match="recon export-session"):
+        await transport.execute("Common_GetMe", "query {}", {})
+    assert calls["n"] == 1
+    assert calls["loads"] == 1
 
 
 @pytest.mark.asyncio
@@ -98,7 +99,7 @@ async def test_persistent_auth_failure_raises_auth_error(monkeypatch):
 
     _install_mock(monkeypatch, handler)
 
-    with pytest.raises(MonarchAuthError, match="recon login monarch"):
+    with pytest.raises(MonarchAuthError, match="recon export-session monarch"):
         await transport.execute("Common_GetMe", "query {}", {})
 
 

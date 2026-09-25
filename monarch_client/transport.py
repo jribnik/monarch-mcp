@@ -87,9 +87,8 @@ async def _post(
     op_name: str, query_text: str, variables: dict[str, Any], material: auth.AuthMaterial
 ) -> httpx.Response:
     client = _get_http_client()
-    # httpx deprecates per-request `cookies=`; set them on the client instance
-    # instead. Harmless to re-set on every call (auth.load() is either the
-    # same cached material or a full refresh, never a partial delta).
+    # httpx deprecates per-request `cookies=`; set them on the client
+    # instance instead. Harmless to re-set on every call.
     client.cookies.update(material.cookies)
     body = {"operationName": op_name, "variables": variables, "query": query_text}
     try:
@@ -112,16 +111,14 @@ async def execute(
     Raises MonarchGraphQLError on any `errors[]` in the response, even
     alongside partial `data` -- for financial reads, a silently-incomplete
     result is worse than a loud failure (the partial data is still attached
-    to the exception for debugging). On a non-Cloudflare 401/403, the cached
-    auth material is refreshed exactly once and the request retried exactly
-    once before raising MonarchAuthError.
+    to the exception for debugging). On a non-Cloudflare 401/403, raises
+    MonarchAuthError immediately -- auth.py is a pure file reader with no
+    way to refresh itself, so retrying with the same material would just
+    reproduce the same failure; see auth.py's module docstring for the
+    actual fix (a human re-exports the session file).
     """
     material = auth.load()
     resp = await _post(op_name, query_text, variables, material)
-
-    if resp.status_code in (401, 403) and not _looks_like_cloudflare_block(resp):
-        material = auth.load(force_refresh=True)
-        resp = await _post(op_name, query_text, variables, material)
 
     if resp.status_code == 429:
         retry_after = resp.headers.get("Retry-After")
@@ -138,8 +135,10 @@ async def execute(
 
     if resp.status_code in (401, 403):
         raise MonarchAuthError(
-            f"{op_name}: still unauthorized after a refresh (status "
-            f"{resp.status_code})\nrun: recon login monarch"
+            f"{op_name}: unauthorized (status {resp.status_code}) -- the "
+            f"auth file for site {auth.site()!r} is stale or invalid\n"
+            f"run: recon export-session {auth.site()} --api-host "
+            f"{auth.API_HOST} --out {auth.cache_path()}"
         )
 
     if resp.status_code >= 400:

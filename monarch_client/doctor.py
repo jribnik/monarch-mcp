@@ -1,5 +1,5 @@
 """
-python -m monarch_client.doctor [--op OP_NAME] [--refresh-auth]
+python -m monarch_client.doctor [--op OP_NAME]
 
 End-to-end health check for monarch_client, run from monarch-mcp's venv.
 This is the tool to run first when a monarch_client-backed MCP tool starts
@@ -7,11 +7,15 @@ failing. Never prints cookie/header VALUES -- only cookie names and
 expiry -- since this is routinely run by a human pasting terminal output
 into a chat.
 
-With no arguments: checks the `recon` binary is findable, loads (and prints
-a summary of) current auth material, makes one live smoke call
-(Common_GetMe), and -- if api-recon's catalog is reachable on this
-machine -- flags any vendored operation whose catalog hash has drifted
-since it was vendored.
+monarch_client itself never shells out to `recon` (see auth.py's module
+docstring) -- so this doctor doesn't check for a `recon` binary either.
+If the auth check below fails, it prints the exact `recon export-session`
+command to run from api-recon to fix it.
+
+With no arguments: reads (and prints a summary of) the current auth file,
+makes one live smoke call (Common_GetMe), and -- if api-recon's catalog is
+reachable on this machine -- flags any vendored operation whose catalog
+hash has drifted since it was vendored.
 
 With --op NAME: calls that one vendored operation with no variables (most
 of the 9 read ops need real variables -- see reads.py -- so this is a raw
@@ -25,6 +29,7 @@ import argparse
 import asyncio
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -41,19 +46,9 @@ def _api_recon_catalog_path() -> Path:
     )
 
 
-def _check_recon_bin() -> bool:
+def _check_auth() -> Optional[auth.AuthMaterial]:
     try:
-        path = auth._resolve_recon_bin()
-    except MonarchError as e:
-        print(f"[FAIL] recon binary: {e}")
-        return False
-    print(f"[ok]   recon binary: {path}")
-    return True
-
-
-def _check_auth(*, force_refresh: bool) -> Optional[auth.AuthMaterial]:
-    try:
-        material = auth.load(force_refresh=force_refresh)
+        material = auth.load()
     except MonarchError as e:
         print(f"[FAIL] auth: {e}")
         return None
@@ -63,6 +58,18 @@ def _check_auth(*, force_refresh: bool) -> Optional[auth.AuthMaterial]:
     )
     print(f"       expires_at (informational bound only): {material.expires_at}")
     print(f"       exported_at: {material.exported_at}")
+
+    path = auth.cache_path()
+    if path.exists():
+        age_hours = (time.time() - path.stat().st_mtime) / 3600
+        print(f"       file age: {age_hours:.1f}h ({path})")
+        if age_hours > 24 * 30:
+            print(
+                "       [info] this file hasn't been refreshed in 30+ days -- "
+                "if auth starts failing, re-run: "
+                f"recon export-session {auth.site()} --api-host {auth.API_HOST} "
+                f"--out {path}"
+            )
     return material
 
 
@@ -131,11 +138,6 @@ def main() -> None:
     parser.add_argument(
         "--op", help="Execute one vendored op with no variables; print response size."
     )
-    parser.add_argument(
-        "--refresh-auth",
-        action="store_true",
-        help="Force a fresh `recon export-session` before checking.",
-    )
     args = parser.parse_args()
 
     label = "REAL account" if auth.site() == auth.DEFAULT_SITE else "sandbox/test account"
@@ -145,9 +147,8 @@ def main() -> None:
         asyncio.run(_run_op(args.op))
         return
 
-    ok = _check_recon_bin()
-    material = _check_auth(force_refresh=args.refresh_auth)
-    ok = ok and material is not None
+    material = _check_auth()
+    ok = material is not None
     if material is not None:
         ok = asyncio.run(_check_smoke_call()) and ok
     _check_catalog_drift()

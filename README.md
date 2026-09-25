@@ -101,7 +101,7 @@ There are now two ways this server can talk to Monarch:
   each documented as an explicit exception in its own `.graphql` file
   under `monarch_client/operations/`. Set `MONARCH_CLIENT_SITE=monarch-sandbox`
   to point `monarch_client` itself at that account for any future testing
-  (`doctor` and every auth refresh print which site they're using,
+  (`doctor` and every `load()` call print which site they're using,
   precisely so this can't happen by accident — it did, once, before this
   existed).
 
@@ -136,17 +136,26 @@ immediately, no re-login or state cleanup needed.
 ~/src/monarch-mcp/.venv/bin/python -m monarch_client.doctor
 ```
 
-checks that `recon` is findable, that auth material loads (and refreshes it
-with `--refresh-auth`), makes one live smoke call, and flags any vendored
-operation whose text has drifted from api-recon's current catalog. If it
-reports an auth failure, the fix is almost always:
+reads the current auth file, makes one live smoke call, and flags any
+vendored operation whose text has drifted from api-recon's current catalog.
+`monarch_client` never shells out to `recon` itself (it's a pure reader of
+a file api-recon produces, the same way it's a pure reader of the vendored
+`.graphql` files) — so if it reports an auth failure, the fix is two
+commands you run yourself, both from api-recon:
 
 ```bash
-~/src/api-recon/.venv/bin/recon login monarch
+~/src/api-recon/.venv/bin/recon login monarch           # only if the session itself expired
+~/src/api-recon/.venv/bin/recon export-session monarch --api-host api.monarch.com \
+  --out ~/.monarch-mcp/api-auth.monarch.json
 ```
 
-(a real, headful browser login — MFA included — completed by you; `client`
-backend never has a password-login path of its own).
+The first is a real, headful browser login (MFA included) completed by
+you — `client` backend never has a password-login path of its own. The
+second turns that session into the plain cookie file `monarch_client`
+reads; run it again any time auth looks stale (`doctor` prints the file's
+age). Neither needs to be automated or re-run on a schedule — a session
+lasts months, and `doctor`'s error message always names the exact command
+to fix it.
 
 ## Register with Claude Code
 
