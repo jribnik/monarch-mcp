@@ -1,0 +1,24 @@
+# source: recon catalog for 'monarch-sandbox', operation 'Common_CreateTransactionTag'
+# query_hash: 8545d3e93331912b0c209c33d145ce9b28f0daba8bbb4272e32892cb87fbdc94
+# observed in run(s): 2026-09-24T18-44-59Z
+# last_seen: 2026-09-24T18:45:17.328000+00:00
+# exported: 2026-09-24T18:47:14.885538+00:00
+# NOT authoritative -- catalog is built from OBSERVED traffic, not a schema fetch.
+
+mutation Common_CreateTransactionTag($input: CreateTransactionTagInput!) {
+  createTransactionTag(input: $input) {
+    tag {
+      id
+      name
+      color
+      order
+      transactionCount
+      __typename
+    }
+    errors {
+      message
+      __typename
+    }
+    __typename
+  }
+}

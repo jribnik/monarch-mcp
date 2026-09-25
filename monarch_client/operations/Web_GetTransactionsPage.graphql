@@ -1,0 +1,33 @@
+# source: recon catalog for 'monarch', operation 'Web_GetTransactionsPage'
+# query_hash: 67ad5b1f7cb00d85bb873e88a0f56392fb79be5e51788e894d91267b002e37aa
+# observed in run(s): 2026-09-23T15-40-10Z, 2026-09-23T16-27-05Z, 2026-09-24T14-30-04Z
+# last_seen: 2026-09-24T14:30:46.224000+00:00
+# exported: 2026-09-24T15:56:34.688214+00:00
+# NOT authoritative -- catalog is built from OBSERVED traffic, not a schema fetch.
+
+query Web_GetTransactionsPage($filters: TransactionFilterInput) {
+  aggregates(filters: $filters) {
+    summary {
+      ...TransactionsSummaryFields
+      __typename
+    }
+    __typename
+  }
+}
+
+fragment TransactionSummaryFields on TransactionsSummary {
+  avg
+  max
+  sum
+  sumIncome
+  sumExpense
+  first
+  last
+  __typename
+}
+
+fragment TransactionsSummaryFields on TransactionsSummary {
+  ...TransactionSummaryFields
+  maxExpense
+  __typename
+}

@@ -1,0 +1,117 @@
+# source: recon catalog for 'monarch-sandbox', operation 'Common_PreviewTransactionRule'
+# query_hash: 4e7341ba4d62c4556764600293ec79e875fb7485c1683eada0d2a24971000617
+# observed in run(s): 2026-09-24T19-44-40Z, 2026-09-24T20-52-07Z
+# last_seen: 2026-09-24T20:52:26.724000+00:00
+# exported: 2026-09-24T20:53:48.396427+00:00
+# NOT authoritative -- catalog is built from OBSERVED traffic, not a schema fetch.
+# HAND-REPAIRED: `limit` was captured as the int literal 0 -- api-recon's
+# literal-redaction silently zeroes int/float literals with NO placeholder
+# (unlike string literals, which get "__recon_redacted__"), so this requires
+# manually grepping the raw HAR body rather than a simple text search. The
+# real value, 30, was recovered from
+# artifacts/monarch-sandbox/runs/2026-09-24T19-44-40Z/capture.har and matches
+# _audit/monarchmoney/monarchmoney.py's own hand-authored query exactly.
+
+query Common_PreviewTransactionRule($rule: TransactionRulePreviewInput!, $offset: Int) {
+  transactionRulePreview(input: $rule) {
+    totalCount
+    results(offset: $offset, limit: 30) {
+      newName
+      newSplitTransactions
+      newCategory {
+        id
+        icon
+        name
+        __typename
+      }
+      newOwnerIsJoint
+      newOwnerUser {
+        id
+        displayName
+        profilePictureUrl
+        __typename
+      }
+      newHideFromReports
+      newTags {
+        id
+        name
+        color
+        order
+        __typename
+      }
+      newGoal {
+        id
+        name
+        imageStorageProvider
+        imageStorageProviderId
+        __typename
+      }
+      newSavingsGoal {
+        id
+        name
+        imageStorageProvider
+        imageStorageProviderId
+        __typename
+      }
+      newBusinessEntity {
+        id
+        name
+        logoUrl
+        color
+        __typename
+      }
+      newBusinessEntityIsUnassigned
+      newSplitTransactions
+      transaction {
+        id
+        date
+        amount
+        merchant {
+          id
+          name
+          __typename
+        }
+        category {
+          id
+          name
+          icon
+          __typename
+        }
+        ownedByUser {
+          id
+          displayName
+          profilePictureUrl
+          __typename
+        }
+        businessEntity {
+          id
+          name
+          logoUrl
+          color
+          __typename
+        }
+        goal {
+          id
+          name
+          imageStorageProvider
+          imageStorageProviderId
+          __typename
+        }
+        savingsGoalEvent {
+          id
+          goal {
+            id
+            name
+            imageStorageProvider
+            imageStorageProviderId
+            __typename
+          }
+          __typename
+        }
+        __typename
+      }
+      __typename
+    }
+    __typename
+  }
+}

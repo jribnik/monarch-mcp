@@ -1,0 +1,37 @@
+# source: recon catalog for 'monarch-sandbox', operation 'Web_SetTransactionTags'
+# query_hash: f6c8172275e0001ed57bb548f58bda80a269d1a425c88811a6b65610f582723e
+# observed in run(s): 2026-09-24T23-00-38Z
+# last_seen: 2026-09-24T23:00:49.851000+00:00
+# exported: 2026-09-24T23:02:55.662381+00:00
+# NOT authoritative -- catalog is built from OBSERVED traffic, not a schema fetch.
+
+mutation Web_SetTransactionTags($input: SetTransactionTagsInput!, $debugActivityLogEnabled: Boolean! = false) {
+  setTransactionTags(input: $input) {
+    errors {
+      ...PayloadErrorFields
+      __typename
+    }
+    transaction {
+      id
+      tags {
+        id
+        __typename
+      }
+      activityLog @skip(if: $debugActivityLogEnabled)
+      debugActivityLog @include(if: $debugActivityLogEnabled)
+      __typename
+    }
+    __typename
+  }
+}
+
+fragment PayloadErrorFields on PayloadError {
+  fieldErrors {
+    field
+    messages
+    __typename
+  }
+  message
+  code
+  __typename
+}

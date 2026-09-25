@@ -1,0 +1,314 @@
+# source: recon catalog for 'monarch', operation 'Web_GetTransactionDrawer'
+# query_hash: 5bf4ab6d55be1c57510c3847bfc5f57700f4ecfeb4fe80e70c3087dd09d5ba76
+# observed in run(s): 2026-09-23T15-40-10Z, 2026-09-23T16-27-05Z, 2026-09-24T14-30-04Z
+# last_seen: 2026-09-24T14:30:22.384000+00:00
+# exported: 2026-09-24T15:56:34.688587+00:00
+# NOT authoritative -- catalog is built from OBSERVED traffic, not a schema fetch.
+
+query Web_GetTransactionDrawer($id: UUID!, $redirectPosted: Boolean, $debugActivityLogEnabled: Boolean! = false) {
+  getTransaction(id: $id, redirectPosted: $redirectPosted) {
+    id
+    ...TransactionDrawerFields
+    __typename
+  }
+  myHousehold {
+    id
+    users {
+      id
+      displayName
+      profilePictureUrl
+      __typename
+    }
+    __typename
+  }
+}
+
+fragment TransactionDrawerSplitMessageFields on Transaction {
+  id
+  amount
+  merchant {
+    id
+    name
+    __typename
+  }
+  category {
+    id
+    icon
+    name
+    __typename
+  }
+  __typename
+}
+
+fragment OriginalTransactionFields on Transaction {
+  id
+  date
+  amount
+  merchant {
+    id
+    name
+    __typename
+  }
+  __typename
+}
+
+fragment AccountLinkFields on Account {
+  id
+  displayName
+  icon
+  logoUrl
+  id
+  __typename
+}
+
+fragment TransactionOverviewFields on Transaction {
+  id
+  amount
+  pending
+  date
+  hideFromReports
+  hiddenByAccount
+  plaidName
+  notes
+  isRecurring
+  reviewStatus
+  needsReview
+  isSplitTransaction
+  dataProviderDescription
+  deletedAt
+  deletedByType
+  needsReviewByUser {
+    id
+    __typename
+  }
+  attachments {
+    id
+    __typename
+  }
+  goal {
+    id
+    name
+    __typename
+  }
+  isLinkedToPaydownBudget
+  savingsGoalEvent {
+    id
+    goal {
+      id
+      name
+      __typename
+    }
+    __typename
+  }
+  category {
+    id
+    name
+    icon
+    systemCategory
+    group {
+      id
+      type
+      __typename
+    }
+    __typename
+  }
+  merchant {
+    name
+    id
+    transactionCount
+    logoUrl
+    defaultCategoryApplicationMode
+    showDefaultCategoryPrompt
+    defaultCategory {
+      id
+      name
+      icon
+      __typename
+    }
+    recurringTransactionStream {
+      frequency
+      isActive
+      __typename
+    }
+    __typename
+  }
+  tags {
+    id
+    name
+    color
+    order
+    __typename
+  }
+  account {
+    id
+    displayName
+    icon
+    logoUrl
+    linkedGoal {
+      id
+      name
+      __typename
+    }
+    __typename
+  }
+  ownedByUser {
+    id
+    displayName
+    profilePictureUrl
+    __typename
+  }
+  businessEntity {
+    id
+    name
+    logoUrl
+    color
+    __typename
+  }
+  __typename
+}
+
+fragment TransactionDrawerFields on Transaction {
+  id
+  amount
+  pending
+  activityLog @skip(if: $debugActivityLogEnabled)
+  debugActivityLog @include(if: $debugActivityLogEnabled)
+  isRecurring
+  date
+  originalDate
+  hideFromReports
+  needsReview
+  reviewedAt
+  reviewedByUser {
+    id
+    name
+    __typename
+  }
+  plaidName
+  notes
+  hasSplitTransactions
+  isSplitTransaction
+  isManual
+  updatedByRetailSync
+  linkedRetailTransactionId
+  isLinkedToPaydownBudget
+  splitTransactions {
+    id
+    ...TransactionDrawerSplitMessageFields
+    __typename
+  }
+  originalTransaction {
+    id
+    updatedByRetailSync
+    ...OriginalTransactionFields
+    __typename
+  }
+  attachments {
+    id
+    extension
+    sizeBytes
+    filename
+    originalAssetUrl
+    retailUserAttachment {
+      id
+      __typename
+    }
+    retailTransaction {
+      id
+      __typename
+    }
+    __typename
+  }
+  account {
+    id
+    hideTransactionsFromReports
+    hideInBudget
+    isLiability
+    ownedByUser {
+      id
+      __typename
+    }
+    businessEntity {
+      id
+      __typename
+    }
+    type {
+      name
+      display
+      __typename
+    }
+    ...AccountLinkFields
+    __typename
+  }
+  category {
+    id
+    __typename
+  }
+  goal {
+    id
+    __typename
+  }
+  savingsGoalEvent {
+    id
+    goal {
+      id
+      __typename
+    }
+    account {
+      id
+      __typename
+    }
+    relatedGoalEvents {
+      id
+      amount
+      date
+      type
+      goal {
+        id
+        __typename
+      }
+      account {
+        id
+        __typename
+      }
+      __typename
+    }
+    __typename
+  }
+  merchant {
+    id
+    name
+    transactionCount
+    logoUrl
+    hasActiveRecurringStreams
+    recurringTransactionStream {
+      id
+      frequency
+      __typename
+    }
+    __typename
+  }
+  tags {
+    id
+    name
+    color
+    order
+    __typename
+  }
+  needsReviewByUser {
+    id
+    __typename
+  }
+  ownedByUser {
+    id
+    __typename
+  }
+  ownershipOverriddenAt
+  businessEntity {
+    id
+    __typename
+  }
+  businessEntityOverriddenAt
+  ...TransactionOverviewFields
+  __typename
+}

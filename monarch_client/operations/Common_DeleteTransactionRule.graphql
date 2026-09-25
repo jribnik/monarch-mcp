@@ -1,0 +1,42 @@
+# source: NOT api-recon catalog-exported -- see note below.
+# NOT authoritative -- see operations/README.md.
+#
+# EXCEPTION TO THE NORMAL VENDORING PROCESS: this file was NOT captured via
+# `recon export-ops` from a catalog entry. The UI flow for deleting a rule
+# opens a nested confirmation dialog (rule-edit page is itself a
+# [role=dialog]; its own Delete button opens a SECOND Cancel/Delete dialog
+# on top) that proved fragile to drive reliably via Playwright automation.
+# Rather than keep fighting UI selectors for marginal benefit, this
+# operation was instead verified directly and functionally: called live
+# against the disposable monarch-sandbox account with this exact query text
+# (copied verbatim from _audit/monarchmoney/monarchmoney.py's own
+# hand-authored, long-production-tested version), confirmed it returned no
+# errors, and confirmed via a follow-up Web_GetTransactionRules call that
+# the target rule was actually gone -- twice, on two separate test rules,
+# 2026-09-24. Also confirmed the response's `deleted` field is false EVEN
+# ON SUCCESS (matches server.py's existing delete_transaction_rule
+# docstring: "the API's `deleted` flag is unreliable ... only an actual
+# failure raises an error -- verify by calling get_transaction_rules
+# again").
+
+mutation Common_DeleteTransactionRule($id: ID!) {
+  deleteTransactionRule(id: $id) {
+    deleted
+    errors {
+      ...PayloadErrorFields
+      __typename
+    }
+    __typename
+  }
+}
+
+fragment PayloadErrorFields on PayloadError {
+  fieldErrors {
+    field
+    messages
+    __typename
+  }
+  message
+  code
+  __typename
+}

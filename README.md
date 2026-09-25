@@ -76,6 +76,78 @@ This saves an **encrypted** session to `~/.monarch-mcp/session.mmsession` so the
 server can reuse the login without your password. Re-run it whenever the session
 expires (you'll see auth errors from the tools).
 
+## Backends (monarch_client, experimental)
+
+There are now two ways this server can talk to Monarch:
+
+- **`library`** (default, unchanged) — `monarchmoney-enhanced`, as described
+  above.
+- **`client`** — [`monarch_client`](monarch_client/), a self-contained
+  replacement built on plain HTTP + vendored query text captured from the
+  real web app by [api-recon](https://github.com/jribnik/api-recon). Auth
+  comes from api-recon's own encrypted browser session (`recon login
+  monarch`), not from this repo's `auth.py`/`session.mmsession`. **Full
+  coverage: all 9 read tools and all 8 write tools.** Every write op was
+  captured and/or verified against a dedicated, disposable
+  `monarch-sandbox` account (see api-recon's `adapters/__init__.py`) before
+  it ever touched the real one — including a manual "Cash" test account
+  with real test transactions (the sandbox starts with none) and, for
+  `mark_stream_as_not_recurring`, a manually-forced recurring stream
+  (Monarch's own detection is a backend batch job, not real-time, so
+  waiting for it wasn't practical — the Recurring page's "mark this
+  merchant as recurring" override was used instead). Two of the eight write
+  ops (`delete_transaction_rule`, `mark_stream_as_not_recurring`) were
+  verified by direct functional call rather than a UI-driven HAR capture,
+  each documented as an explicit exception in its own `.graphql` file
+  under `monarch_client/operations/`. Set `MONARCH_CLIENT_SITE=monarch-sandbox`
+  to point `monarch_client` itself at that account for any future testing
+  (`doctor` and every auth refresh print which site they're using,
+  precisely so this can't happen by accident — it did, once, before this
+  existed).
+
+Backend selection is per-tool, via environment variables read at server
+startup:
+
+```bash
+# Global default for every tool (unset = "library").
+export MONARCH_MCP_BACKEND=library   # or "client", or "dual"
+
+# Force specific tools onto one backend regardless of the global default.
+# A tool named in both lists uses "library" (the safer fallback).
+export MONARCH_MCP_CLIENT_TOOLS=get_tags,get_categories
+export MONARCH_MCP_LIBRARY_TOOLS=get_transactions
+```
+
+`dual` is a **read-only, diagnostic** mode: it calls both backends, always
+returns the library's result (so nothing changes for Claude), and appends a
+structure-only diff (key names and value *types*, never values) to
+`~/.monarch-mcp/parity.log` whenever the two disagree. Use it to build
+confidence in a tool before flipping it to `client` for real.
+
+**Flipping a tool:** set `MONARCH_MCP_CLIENT_TOOLS` to include it and restart
+the MCP server (`claude mcp` reconnects on Claude Code restart, or restart
+the process directly). **Rolling back:** unset it, or add the tool to
+`MONARCH_MCP_LIBRARY_TOOLS`, and restart — the change takes effect
+immediately, no re-login or state cleanup needed.
+
+**When something on the `client` backend breaks:**
+
+```bash
+~/src/monarch-mcp/.venv/bin/python -m monarch_client.doctor
+```
+
+checks that `recon` is findable, that auth material loads (and refreshes it
+with `--refresh-auth`), makes one live smoke call, and flags any vendored
+operation whose text has drifted from api-recon's current catalog. If it
+reports an auth failure, the fix is almost always:
+
+```bash
+~/src/api-recon/.venv/bin/recon login monarch
+```
+
+(a real, headful browser login — MFA included — completed by you; `client`
+backend never has a password-login path of its own).
+
 ## Register with Claude Code
 
 ```bash
@@ -124,9 +196,11 @@ Then restart Claude Code so it connects. Ask things like:
 ## Layout
 
 ```
-config.py    key/session paths + strong-key management
-auth.py      one-time interactive login → encrypted session
-server.py    FastMCP server (the 11 tools above)
-_audit/      shallow clone at the audited commit (for reference; gitignored)
-.venv/       python3.11 environment
+config.py         key/session paths + strong-key management (library backend)
+auth.py           one-time interactive login → encrypted session (library backend)
+backend.py        per-tool library/client/dual selection -- see "Backends" above
+server.py         FastMCP server (the tools above)
+monarch_client/   experimental replacement backend -- see monarch_client/__init__.py
+_audit/           shallow clone at the audited commit (for reference; gitignored)
+.venv/            python3.11 environment
 ```

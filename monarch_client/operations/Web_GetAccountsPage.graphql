@@ -1,0 +1,149 @@
+# source: recon catalog for 'monarch', operation 'Web_GetAccountsPage'
+# query_hash: dceb5b0ae3a7fb07440b28c414ecf90dabe5649223b1c8e51ea9b04410dbb61a
+# observed in run(s): 2026-09-23T15-40-10Z, 2026-09-23T16-27-05Z, 2026-09-24T14-30-04Z
+# last_seen: 2026-09-24T14:30:14.437000+00:00
+# exported: 2026-09-24T15:56:34.687001+00:00
+# NOT authoritative -- catalog is built from OBSERVED traffic, not a schema fetch.
+
+query Web_GetAccountsPage($filters: AccountFilters) {
+  hasAccounts
+  accountTypeSummaries(filters: $filters) {
+    type {
+      name
+      display
+      group
+      __typename
+    }
+    accounts {
+      id
+      credential {
+        id
+        institution {
+          id
+          name
+          __typename
+        }
+        __typename
+      }
+      connectionStatus {
+        connectionStatusCode
+        copyTitle
+        inAppSmallCopy
+        inAppCopy
+        helpCenterUrl
+        __typename
+      }
+      ...AccountsListFields
+      __typename
+    }
+    isAsset
+    totalDisplayBalance
+    __typename
+  }
+  householdPreferences {
+    id
+    accountGroupOrder
+    collaborationToolsEnabled
+    __typename
+  }
+}
+
+fragment AccountMaskFields on Account {
+  id
+  mask
+  subtype {
+    display
+    __typename
+  }
+  __typename
+}
+
+fragment InstitutionStatusTooltipFields on Institution {
+  id
+  logo
+  name
+  status
+  plaidStatus
+  newConnectionsDisabled
+  hasIssuesReported
+  url
+  hasIssuesReportedMessage
+  transactionsStatus
+  balanceStatus
+  __typename
+}
+
+fragment AccountListItemFields on Account {
+  id
+  displayName
+  displayBalance
+  signedBalance
+  updatedAt
+  syncDisabled
+  dataProviderDeactivatedAt
+  icon
+  logoUrl
+  isHidden
+  isAsset
+  includeInNetWorth
+  includeBalanceInNetWorth
+  displayLastUpdatedAt
+  limit
+  type {
+    name
+    __typename
+  }
+  ...AccountMaskFields
+  credential {
+    id
+    updateRequired
+    dataProvider
+    disconnectedFromDataProviderAt
+    syncDisabledAt
+    syncDisabledReason
+    __typename
+  }
+  connectionStatus {
+    connectionStatusCode
+    copyTitle
+    inAppSmallCopy
+    inAppCopy
+    helpCenterUrl
+    __typename
+  }
+  institution {
+    id
+    ...InstitutionStatusTooltipFields
+    __typename
+  }
+  ownedByUser {
+    id
+    displayName
+    profilePictureUrl
+    __typename
+  }
+  businessEntity {
+    id
+    name
+    logoUrl
+    color
+    __typename
+  }
+  __typename
+}
+
+fragment AccountsListFields on Account {
+  id
+  syncDisabled
+  isHidden
+  isAsset
+  includeInNetWorth
+  order
+  type {
+    name
+    display
+    __typename
+  }
+  ...AccountListItemFields
+  __typename
+}

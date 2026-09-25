@@ -1,0 +1,282 @@
+# source: recon catalog for 'monarch', operation 'Common_GetJointPlanningData'
+# query_hash: a72d1aca4c167a4f81fc67ecbfb82b3b0fd8789d054e549b47385abe847cb244
+# observed in run(s): 2026-09-23T15-40-10Z, 2026-09-23T16-27-05Z, 2026-09-24T14-30-04Z
+# last_seen: 2026-09-24T14:30:31.612000+00:00
+# exported: 2026-09-24T15:56:34.688032+00:00
+# NOT authoritative -- catalog is built from OBSERVED traffic, not a schema fetch.
+
+query Common_GetJointPlanningData($startDate: Date!, $endDate: Date!) {
+  budgetSystem
+  budgetData(startMonth: $startDate, endMonth: $endDate) {
+    ...BudgetDataFields
+    __typename
+  }
+  categoryGroups {
+    ...BudgetCategoryGroupFields
+    __typename
+  }
+  goalsV2 {
+    ...BudgetDataGoalsV2Fields
+    __typename
+  }
+  savingsGoalMonthlyBudgetAmounts(startMonth: $startDate, endMonth: $endDate) {
+    ...SavingsGoalMonthlyBudgetAmountsFields
+    __typename
+  }
+  debtPaydownMonthlyBudgetAmounts(startMonth: $startDate, endMonth: $endDate) {
+    ...DebtPaydownMonthlyBudgetAmountsFields
+    __typename
+  }
+}
+
+fragment BudgetDataMonthlyAmountsFields on BudgetMonthlyAmounts {
+  month
+  plannedCashFlowAmount
+  plannedSetAsideAmount
+  actualAmount
+  remainingAmount
+  previousMonthRolloverAmount
+  rolloverType
+  cumulativeActualAmount
+  rolloverTargetAmount
+  __typename
+}
+
+fragment BudgetMonthlyAmountsByCategoryFields on BudgetCategoryMonthlyAmounts {
+  category {
+    id
+    __typename
+  }
+  monthlyAmounts {
+    ...BudgetDataMonthlyAmountsFields
+    __typename
+  }
+  __typename
+}
+
+fragment BudgetMonthlyAmountsByCategoryGroupFields on BudgetCategoryGroupMonthlyAmounts {
+  categoryGroup {
+    id
+    __typename
+  }
+  monthlyAmounts {
+    ...BudgetDataMonthlyAmountsFields
+    __typename
+  }
+  __typename
+}
+
+fragment BudgetMonthlyAmountsForFlexExpenseFields on BudgetFlexMonthlyAmounts {
+  budgetVariability
+  monthlyAmounts {
+    ...BudgetDataMonthlyAmountsFields
+    __typename
+  }
+  __typename
+}
+
+fragment BudgetDataTotalsByMonthFields on BudgetTotals {
+  actualAmount
+  plannedAmount
+  previousMonthRolloverAmount
+  remainingAmount
+  __typename
+}
+
+fragment BudgetTotalsByMonthFields on BudgetMonthTotals {
+  month
+  totalIncome {
+    ...BudgetDataTotalsByMonthFields
+    __typename
+  }
+  totalExpenses {
+    ...BudgetDataTotalsByMonthFields
+    __typename
+  }
+  totalFixedExpenses {
+    ...BudgetDataTotalsByMonthFields
+    __typename
+  }
+  totalNonMonthlyExpenses {
+    ...BudgetDataTotalsByMonthFields
+    __typename
+  }
+  totalFlexibleExpenses {
+    ...BudgetDataTotalsByMonthFields
+    __typename
+  }
+  __typename
+}
+
+fragment BudgetRolloverPeriodFields on BudgetRolloverPeriod {
+  id
+  startMonth
+  endMonth
+  startingBalance
+  targetAmount
+  frequency
+  type
+  __typename
+}
+
+fragment BudgetCategoryFields on Category {
+  id
+  name
+  icon
+  order
+  budgetVariability
+  excludeFromBudget
+  isSystemCategory
+  updatedAt
+  group {
+    id
+    type
+    budgetVariability
+    groupLevelBudgetingEnabled
+    __typename
+  }
+  rolloverPeriod {
+    ...BudgetRolloverPeriodFields
+    __typename
+  }
+  __typename
+}
+
+fragment DebtAccountFields on Account {
+  id
+  displayName
+  displayBalance
+  icon
+  logoUrl
+  includeInNetWorth
+  isHidden
+  displayLastUpdatedAt
+  apr
+  interestRate
+  minimumPayment
+  plannedPayment
+  excludeFromDebtPaydown
+  type {
+    name
+    display
+    __typename
+  }
+  subtype {
+    name
+    display
+    __typename
+  }
+  __typename
+}
+
+fragment BudgetDataFields on BudgetData {
+  monthlyAmountsByCategory {
+    ...BudgetMonthlyAmountsByCategoryFields
+    __typename
+  }
+  monthlyAmountsByCategoryGroup {
+    ...BudgetMonthlyAmountsByCategoryGroupFields
+    __typename
+  }
+  monthlyAmountsForFlexExpense {
+    ...BudgetMonthlyAmountsForFlexExpenseFields
+    __typename
+  }
+  totalsByMonth {
+    ...BudgetTotalsByMonthFields
+    __typename
+  }
+  __typename
+}
+
+fragment BudgetCategoryGroupFields on CategoryGroup {
+  id
+  name
+  order
+  type
+  budgetVariability
+  updatedAt
+  groupLevelBudgetingEnabled
+  categories {
+    ...BudgetCategoryFields
+    __typename
+  }
+  rolloverPeriod {
+    id
+    type
+    startMonth
+    endMonth
+    startingBalance
+    frequency
+    targetAmount
+    __typename
+  }
+  __typename
+}
+
+fragment BudgetDataGoalsV2Fields on GoalV2 {
+  id
+  name
+  archivedAt
+  completedAt
+  priority
+  imageStorageProvider
+  imageStorageProviderId
+  plannedContributions(startMonth: $startDate, endMonth: $endDate) {
+    id
+    month
+    amount
+    __typename
+  }
+  monthlyContributionSummaries(startMonth: $startDate, endMonth: $endDate) {
+    month
+    sum
+    __typename
+  }
+  __typename
+}
+
+fragment SavingsGoalMonthlyBudgetAmountsFields on SavingsGoalMonthlyBudgetAmounts {
+  id
+  savingsGoal {
+    id
+    name
+    type
+    status
+    archivedAt
+    priority
+    targetDate
+    imageStorageProvider
+    imageStorageProviderId
+    __typename
+  }
+  monthlyAmounts {
+    id
+    month
+    plannedAmount
+    actualAmount
+    remainingAmount
+    totalPlannedAmount
+    totalActualAmount
+    totalRemainingAmount
+    __typename
+  }
+  __typename
+}
+
+fragment DebtPaydownMonthlyBudgetAmountsFields on DebtPaydownMonthlyBudgetAmounts {
+  id
+  account {
+    ...DebtAccountFields
+    __typename
+  }
+  monthlyAmounts {
+    id
+    month
+    plannedAmount
+    actualAmount
+    remainingAmount
+    __typename
+  }
+  __typename
+}

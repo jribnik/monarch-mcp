@@ -1,0 +1,40 @@
+# source: NOT api-recon catalog-exported -- see note below.
+# NOT authoritative -- see operations/README.md.
+#
+# EXCEPTION TO THE NORMAL VENDORING PROCESS (same pattern as
+# Common_DeleteTransactionRule.graphql): Monarch's recurring-stream
+# detection is a backend batch process, not real-time -- creating matching
+# transactions live doesn't produce a real stream to test against on
+# demand. Instead, a real stream was created via the UI's manual override
+# (Recurring page -> "Add recurring expenses" -> search a merchant with
+# multiple transactions -> "Mark this merchant as recurring" -> Save,
+# which itself calls a separate merchant-edit mutation, not this one) on
+# the disposable monarch-sandbox account, and THIS mutation was then
+# verified directly and functionally: called live with that real stream's
+# id, confirmed `success: true` with no errors, and confirmed via a
+# follow-up Common_GetAggregatedRecurringItems call that the stream no
+# longer appeared at all -- 2026-09-24. Query text copied verbatim from
+# _audit/monarchmoney/services/transaction_service.py's own
+# hand-authored, long-production-tested version.
+
+mutation Common_MarkAsNotRecurring($streamId: ID!) {
+  markStreamAsNotRecurring(streamId: $streamId) {
+    success
+    errors {
+      ...PayloadErrorFields
+      __typename
+    }
+    __typename
+  }
+}
+
+fragment PayloadErrorFields on PayloadError {
+  fieldErrors {
+    field
+    messages
+    __typename
+  }
+  message
+  code
+  __typename
+}

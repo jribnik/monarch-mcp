@@ -1,0 +1,178 @@
+# source: recon catalog for 'monarch', operation 'Common_GetAggregatedRecurringItems'
+# query_hash: 8ca5f3dc9d36264382287c5e2c294357292f7d3c1701de873b1516e947d981a6
+# observed in run(s): 2026-09-23T15-40-10Z, 2026-09-23T16-27-05Z, 2026-09-24T14-30-04Z
+# last_seen: 2026-09-24T14:30:37.566000+00:00
+# exported: 2026-09-24T15:56:34.688824+00:00
+# NOT authoritative -- catalog is built from OBSERVED traffic, not a schema fetch.
+# HAND-REPAIRED: `groupBy` was captured as the literal string "__recon_redacted__"
+# by api-recon's dissect/graphql.py::_RedactLiterals (every string/int/float
+# literal is redacted before hashing/storing -- see DESIGN.md sec 6b). The real
+# value, "status", was recovered from the raw request body in
+# artifacts/monarch/runs/2026-09-24T14-30-04Z/capture.har (bodies aren't
+# redacted, only headers). See operations/__init__.py's PROVENANCE entry for
+# this op (hand_repaired=True) -- its vendored_sha256 will never match
+# catalog_query_hash, by construction, since the catalog's hash is over the
+# redacted text.
+
+query Common_GetAggregatedRecurringItems($startDate: Date!, $endDate: Date!, $filters: RecurringTransactionFilter, $includeFinancialInsights: Boolean = false) {
+  aggregatedRecurringItems(
+    startDate: $startDate
+    endDate: $endDate
+    groupBy: "status"
+    filters: $filters
+  ) {
+    groups {
+      groupBy {
+        status
+        __typename
+      }
+      results {
+        ...RecurringItemFields
+        __typename
+      }
+      summary {
+        expense {
+          total
+          __typename
+        }
+        creditCard {
+          total
+          __typename
+        }
+        income {
+          total
+          __typename
+        }
+        __typename
+      }
+      __typename
+    }
+    aggregatedSummary {
+      expense {
+        completed
+        remaining
+        total
+        count
+        pendingAmountCount
+        __typename
+      }
+      creditCard {
+        completed
+        remaining
+        total
+        count
+        pendingAmountCount
+        __typename
+      }
+      income {
+        completed
+        remaining
+        total
+        __typename
+      }
+      __typename
+    }
+    __typename
+  }
+}
+
+fragment RecurringItemStreamFields on RecurringTransactionStream {
+  id
+  frequency
+  isActive
+  amount
+  isApproximate
+  name
+  logoUrl
+  merchant {
+    id
+    name
+    logoUrl
+    financialInsights @include(if: $includeFinancialInsights) {
+      id
+      status
+      description
+      reasoning
+      savingsEstimateLow
+      capturedSavingsLow
+      currentAnnualCost
+      __typename
+    }
+    __typename
+  }
+  creditReportLiabilityAccount {
+    id
+    liabilityType
+    account {
+      id
+      __typename
+    }
+    __typename
+  }
+  __typename
+}
+
+fragment RecurringItemLiabilityFields on LiabilityStatement {
+  id
+  minimumPaymentAmount
+  paymentsInformation {
+    status
+    remainingBalance
+    transactions {
+      id
+      amount
+      date
+      category {
+        id
+        name
+        icon
+        group {
+          id
+          name
+          type
+          __typename
+        }
+        __typename
+      }
+      __typename
+    }
+    __typename
+  }
+  __typename
+}
+
+fragment RecurringItemFields on RecurringTransactionCalendarItem {
+  stream {
+    ...RecurringItemStreamFields
+    __typename
+  }
+  date
+  isPast
+  isLate
+  isMissed
+  markedPaidAt
+  isCompleted
+  transactionId
+  amount
+  amountDiff
+  isAmountDifferentThanOriginal
+  creditReportLiabilityStatementId
+  category {
+    id
+    name
+    icon
+    __typename
+  }
+  account {
+    id
+    displayName
+    icon
+    logoUrl
+    __typename
+  }
+  liabilityStatement {
+    ...RecurringItemLiabilityFields
+    __typename
+  }
+  __typename
+}

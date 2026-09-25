@@ -1,0 +1,21 @@
+# source: recon catalog for 'monarch', operation 'Common_GetHouseholdTransactionTags'
+# query_hash: 08a49040cd401644b18642e185797d89e265c8322bd8a5aedc2736a825a88aad
+# observed in run(s): 2026-09-23T16-27-05Z, 2026-09-24T14-30-04Z
+# last_seen: 2026-09-24T14:30:41.454000+00:00
+# exported: 2026-09-24T15:56:34.687863+00:00
+# NOT authoritative -- catalog is built from OBSERVED traffic, not a schema fetch.
+
+query Common_GetHouseholdTransactionTags($search: String, $limit: Int, $bulkParams: BulkTransactionDataParams, $includeTransactionCount: Boolean = false) {
+  householdTransactionTags(
+    search: $search
+    limit: $limit
+    bulkParams: $bulkParams
+  ) {
+    id
+    name
+    color
+    order
+    transactionCount @include(if: $includeTransactionCount)
+    __typename
+  }
+}

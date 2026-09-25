@@ -1,0 +1,27 @@
+# source: recon catalog for 'monarch-sandbox', operation 'Common_CreateTransactionRuleMutationV2'
+# query_hash: ae5c96e2335256ff62d0e9527b51b3630d59b5960699aacbf30ea74591a132b6
+# observed in run(s): 2026-09-24T19-44-40Z, 2026-09-24T20-52-07Z
+# last_seen: 2026-09-24T20:52:20.533000+00:00
+# exported: 2026-09-24T20:53:48.397164+00:00
+# NOT authoritative -- catalog is built from OBSERVED traffic, not a schema fetch.
+
+mutation Common_CreateTransactionRuleMutationV2($input: CreateTransactionRuleInput!) {
+  createTransactionRuleV2(input: $input) {
+    errors {
+      ...PayloadErrorFields
+      __typename
+    }
+    __typename
+  }
+}
+
+fragment PayloadErrorFields on PayloadError {
+  fieldErrors {
+    field
+    messages
+    __typename
+  }
+  message
+  code
+  __typename
+}
