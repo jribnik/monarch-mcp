@@ -1,0 +1,31 @@
+# source: recon catalog for 'monarch-sandbox' (a disposable test account,
+#   NOT the real 'monarch' site -- see this file's PROVENANCE note for why
+#   a sandbox-observed op is exactly as valid to vendor as one captured
+#   against the real account: query text is account-agnostic).
+# query_hash: 15f972b10f3ed8d2c22b6135bbd4683837eb3fc3b92baa45283090dbf7494040
+# observed in run(s): 2026-09-24T18-44-59Z
+# last_seen: 2026-09-24T18:45:19.733000+00:00
+# exported: 2026-09-28 (backfilled from the sandbox catalog; this op was
+#   captured before this file existed -- see PROVENANCE note)
+# NOT authoritative -- catalog is built from OBSERVED traffic, not a schema fetch.
+
+mutation Common_DeleteHouseholdTransactionTag($tagId: ID!) {
+  deleteTransactionTag(tagId: $tagId) {
+    errors {
+      ...PayloadErrorFields
+      __typename
+    }
+    __typename
+  }
+}
+
+fragment PayloadErrorFields on PayloadError {
+  fieldErrors {
+    field
+    messages
+    __typename
+  }
+  message
+  code
+  __typename
+}

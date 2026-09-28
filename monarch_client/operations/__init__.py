@@ -163,8 +163,9 @@ PROVENANCE: dict[str, dict] = {
             "adapters/__init__.py in api-recon), NOT the real 'monarch' "
             "site's catalog -- verified live end-to-end: created a tag, "
             "confirmed it appeared, deleted it via "
-            "Common_DeleteHouseholdTransactionTag (not yet vendored -- no "
-            "delete_tag MCP tool exists), confirmed it was gone. Variables: "
+            "Common_DeleteHouseholdTransactionTag (now vendored -- see its "
+            "own entry below, backing the delete_tag MCP tool added "
+            "2026-09-28), confirmed it was gone. Variables: "
             "{'input': {'name': str, 'color': hex str}}. Query text is "
             "account-agnostic (same schema for every Monarch user), so a "
             "sandbox-observed op is exactly as valid to vendor as one "
@@ -303,6 +304,33 @@ PROVENANCE: dict[str, dict] = {
             "via a follow-up get_transaction_rules call that each target rule "
             "was actually gone. `deleted` is false even on success -- matches "
             "server.py's existing docstring for this tool."
+        ),
+    },
+    "Common_DeleteHouseholdTransactionTag": {
+        "catalog_query_hash": "15f972b10f3ed8d2c22b6135bbd4683837eb3fc3b92baa45283090dbf7494040",
+        # A mutation -- see Common_CreateTransactionRuleMutationV2's comment
+        # above for why this is walk_reachable=False.
+        "walk_reachable": False,
+        "vendored_sha256": "39e6461b50685019af4736898160e1b1375165f3f398368aa35be2060e805200",
+        "exported_at": "2026-09-24T18:45:19.733000+00:00",
+        "runs_seen": ["2026-09-24T18-44-59Z"],
+        "hand_repaired": False,
+        "note": (
+            "backs delete_tag -- closes create_tag's missing counterpart "
+            "(noted as a gap in create_tag's own PROVENANCE entry above "
+            "since 2026-09-24). Unlike Common_MarkAsNotRecurring/"
+            "Common_DeleteTransactionRule, this one WAS genuinely captured "
+            "via a real `recon catalog monarch-sandbox --allow-mutations` "
+            "walk (see create_tag's note for how that run also created and "
+            "deleted a real tag) -- catalog_query_hash above is real, not "
+            "None. Backfilled into this file 2026-09-28 (the day before "
+            "the monarch-sandbox account's planned deletion) from that "
+            "already-captured catalog entry; re-verified live one more "
+            "time first: created 'ZZZ TEST TAG - safe to delete', called "
+            "this mutation with its real id, confirmed the response had "
+            "errors=None, and confirmed via a follow-up get_tags call that "
+            "the account was back to exactly its original 5 default tags "
+            "with no trace of the test tag."
         ),
     },
 }

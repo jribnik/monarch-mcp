@@ -191,6 +191,13 @@ async def create_tag(name: str, color: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+async def delete_tag(tag_id: str) -> dict[str, Any]:
+    """Delete a transaction tag by id (from get_tags). Does not affect the
+    transactions it was applied to, only removes the tag itself."""
+    return await client_writes.delete_tag(tag_id)
+
+
+@mcp.tool()
 async def get_transaction_rules() -> dict[str, Any]:
     """
     List all transaction rules (auto-categorization rules), in priority order.

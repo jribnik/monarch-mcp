@@ -8,7 +8,7 @@ budgets, etc. Built to replace Monarch's own MCP server, which has been offline.
 Built entirely on [`monarch_client`](monarch_client/) — a self-contained client
 against Monarch's real GraphQL API, using plain HTTP + vendored query text
 captured from the real web app by [api-recon](https://github.com/jribnik/api-recon).
-**Full coverage: 9 read tools and 8 write tools**, all 8 write ops captured
+**Full coverage: 9 read tools and 9 write tools**, all captured
 and/or verified against a dedicated, disposable `monarch-sandbox` account
 before ever touching the real one. See `monarch_client/__init__.py`'s module
 docstring for the package's full shape.
@@ -114,6 +114,7 @@ Then restart Claude Code so it connects. Ask things like:
 | `update_transaction` | **write** | edit merchant/amount/date/notes/flags |
 | `set_transaction_tags` | **write** | replace a transaction's tags |
 | `create_tag` | **write** | create a new tag |
+| `delete_tag` | **write** | delete a tag by id |
 | `create_transaction_rule` | **write** | create an auto-categorization rule |
 | `delete_transaction_rule` | **write** | delete a rule by id |
 | `mark_stream_as_not_recurring` | **write** | dismiss a recurring stream |

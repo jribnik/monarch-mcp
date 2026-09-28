@@ -6,15 +6,22 @@ named mutations below are callable, so a prompt-injection or a model
 mistake can't reach an arbitrary mutation. Each function's signature
 mirrors its server.py counterpart exactly, same as reads.py.
 
-Full coverage: all 8 write tools -- create_tag, preview_transaction_rule,
+9 write tools -- create_tag, delete_tag, preview_transaction_rule,
 create_transaction_rule, delete_transaction_rule, recategorize_transaction,
 update_transaction, set_transaction_tags, mark_stream_as_not_recurring --
 each captured and/or verified against a dedicated, disposable
 monarch-sandbox account (see operations/__init__.py's PROVENANCE for each
-op's exact provenance; two of the eight -- delete_transaction_rule and
+op's exact provenance; two -- delete_transaction_rule and
 mark_stream_as_not_recurring -- were verified by direct functional call
 rather than a UI-driven HAR capture, each documented as an explicit
 exception in its own .graphql file). See operations/README.md.
+
+delete_tag was added 2026-09-28, closing a gap left open since the
+original 8-tool build (create_tag shipped with no delete counterpart) --
+added while monarch-sandbox still existed, ahead of its planned deletion
+(it's the safety net for developing/verifying any write, so remaining
+write-path work was prioritized while it was still available -- see
+project memory).
 """
 
 from __future__ import annotations
@@ -67,6 +74,16 @@ async def create_tag(name: str, color: str) -> dict[str, Any]:
         "Common_CreateTransactionTag", {"input": {"name": name, "color": color}}
     )
     return project.create_tag_result(data)
+
+
+async def delete_tag(tag_id: str) -> dict[str, Any]:
+    """Vendored 2026-09-28 (was previously a documented gap -- create_tag
+    with no delete counterpart). Verified live against monarch-sandbox:
+    created a real tag, deleted it via this mutation, confirmed via a
+    follow-up get_tags call the account was back to exactly its original
+    5 default tags."""
+    data = await _call("Common_DeleteHouseholdTransactionTag", {"tagId": tag_id})
+    return project.delete_tag_result(data)
 
 
 async def preview_transaction_rule(

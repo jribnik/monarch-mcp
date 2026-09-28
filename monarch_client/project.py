@@ -229,6 +229,21 @@ def delete_transaction_rule_result(
     return _with_raw({"deleted_flag": deleted}, data, include_raw)
 
 
+def delete_tag_result(data: dict[str, Any], *, include_raw: bool = False) -> dict[str, Any]:
+    """Pass-through, same convention as create_tag_result (this mutation's
+    natural counterpart): `deleteTransactionTag.errors` is Monarch's own
+    APPLICATION-level error convention (the PayloadErrorFields fragment) --
+    a normal field in `data`, not a protocol-level error, so
+    transport.py's automatic MonarchGraphQLError-on-top-level-errors[]
+    never sees it. Surfaced directly (errors=None on success, verified
+    live 2026-09-28) rather than collapsed into a boolean, so a caller
+    sees a real error message if one ever comes back instead of a bare
+    True/False."""
+    return _with_raw(
+        {"deleteTransactionTag": data.get("deleteTransactionTag")}, data, include_raw
+    )
+
+
 def transaction_rules(data: dict[str, Any], *, include_raw: bool = False) -> dict[str, Any]:
     """Pass-through: `transactionRules` is the schema's field name, same
     as the old library used."""
