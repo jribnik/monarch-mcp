@@ -91,8 +91,16 @@ multi-kilobyte query changes by one field.
 
 ## Mutations
 
-All 11 write ops are vendored (full coverage). Every one was captured and/or
-verified against `monarch-sandbox` -- a dedicated, disposable Monarch
+All 11 write tools are vendored (full coverage): 9 real mutations
+(`Common_CreateTransactionTag`, `Common_DeleteHouseholdTransactionTag`,
+`Common_CreateTransactionRuleMutationV2`, `Common_DeleteTransactionRule`,
+`Web_TransactionDrawerUpdateTransaction` (backs 2 tools),
+`Web_SetTransactionTags`, `Common_MarkAsNotRecurring`,
+`Common_CreateTransactionMutation`, `Web_CreateManualAccount`), plus
+`Common_PreviewTransactionRule` -- a QUERY, not a mutation, grouped here
+because its whole purpose is dry-running one (see its own PROVENANCE note).
+Every mutation was captured and/or verified against `monarch-sandbox` -- a
+dedicated, disposable Monarch
 account registered in api-recon's adapter registry
 (`~/src/api-recon/src/recon/adapters/__init__.py`), never the real
 `monarch` site -- so mutations could be exercised freely without touching

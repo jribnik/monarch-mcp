@@ -53,6 +53,27 @@ async def test_create_tag(fake_client):
 
 
 @pytest.mark.asyncio
+async def test_delete_tag_sends_bare_tag_id(fake_client):
+    fake_client.responses["Common_DeleteHouseholdTransactionTag"] = {
+        "deleteTransactionTag": {"errors": None}
+    }
+    result = await writes.delete_tag("t1")
+    assert fake_client.calls == [
+        ("Common_DeleteHouseholdTransactionTag", {"tagId": "t1"})
+    ]
+    assert result == {"deleteTransactionTag": {"errors": None}}
+
+
+@pytest.mark.asyncio
+async def test_delete_tag_surfaces_errors(fake_client):
+    fake_client.responses["Common_DeleteHouseholdTransactionTag"] = {
+        "deleteTransactionTag": {"errors": [{"message": "Tag not found"}]}
+    }
+    result = await writes.delete_tag("bogus")
+    assert result["deleteTransactionTag"]["errors"] == [{"message": "Tag not found"}]
+
+
+@pytest.mark.asyncio
 async def test_preview_transaction_rule_builds_rule_input(fake_client):
     fake_client.responses["Common_PreviewTransactionRule"] = {
         "transactionRulePreview": {"totalCount": 0, "results": []}
@@ -129,7 +150,7 @@ async def test_preview_transaction_rule_rejects_nonexistent_merchant_name(fake_c
             "Web_GetTransactionsList",
             {
                 "offset": 0,
-                "limit": 25,
+                "limit": 100,
                 "orderBy": "date",
                 "filters": {
                     "search": "Definitely Not A Real Merchant XYZ123",
@@ -144,13 +165,47 @@ async def test_preview_transaction_rule_rejects_nonexistent_merchant_name(fake_c
 
 
 @pytest.mark.asyncio
+async def test_verify_merchant_name_exists_flags_truncated_search_distinctly(fake_client):
+    """Opus review 2026-09-28: on the real account (years of history) a
+    short/common merchant name's exact match can be pushed out of the
+    result window by newer transactions that merely contain the string.
+    That must be reported as "can't confirm" (and still reject), not
+    conflated with "doesn't exist" -- the latter's error message lists
+    near-miss names that could steer a retry toward the WRONG merchant."""
+    fake_client.responses["Web_GetTransactionsList"] = {
+        "allTransactions": {
+            "totalCount": 150,
+            "results": [{"merchant": {"name": "Some Other Merchant"}}] * 100,
+        }
+    }
+    with pytest.raises(ValueError, match="can't confirm"):
+        await writes.preview_transaction_rule(set_merchant_name="Target")
+
+
+@pytest.mark.asyncio
 async def test_create_transaction_rule_rejects_nonexistent_merchant_name(fake_client):
     fake_client.responses["Web_GetTransactionsList"] = {
         "allTransactions": {"totalCount": 0, "results": []}
     }
     with pytest.raises(ValueError, match="doesn't exactly match"):
         await writes.create_transaction_rule(set_merchant_name="Not Real")
-    assert fake_client.calls == [("Web_GetTransactionsList", fake_client.calls[0][1])]
+    assert fake_client.calls == [
+        (
+            "Web_GetTransactionsList",
+            {
+                "offset": 0,
+                "limit": 100,
+                "orderBy": "date",
+                "filters": {
+                    "search": "Not Real",
+                    "categories": [],
+                    "accounts": [],
+                    "tags": [],
+                    "transactionVisibility": "non_hidden_transactions_only",
+                },
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio
@@ -219,8 +274,19 @@ async def test_delete_transaction_rule_defaults_missing_deleted_to_false(fake_cl
     assert result == {"deleted_flag": False}
 
 
+def _accounts_page_response(accounts: list[dict]) -> dict:
+    return {
+        "accountTypeSummaries": [
+            {"type": {"name": "depository"}, "accounts": accounts}
+        ]
+    }
+
+
 @pytest.mark.asyncio
 async def test_create_transaction_sends_full_input(fake_client):
+    fake_client.responses["Web_GetAccountsPage"] = _accounts_page_response(
+        [{"id": "acc1", "displayName": "Manual Cash", "credential": None}]
+    )
     fake_client.responses["Common_CreateTransactionMutation"] = {
         "createTransaction": {"transaction": {"id": "t1"}, "errors": None}
     }
@@ -231,22 +297,20 @@ async def test_create_transaction_sends_full_input(fake_client):
         merchant_name="Recon Test Coffee Shop",
         category_id="cat1",
     )
-    assert fake_client.calls == [
-        (
-            "Common_CreateTransactionMutation",
-            {
-                "input": {
-                    "date": "2026-09-28",
-                    "shouldUpdateBalance": True,
-                    "accountId": "acc1",
-                    "ownerUserId": None,
-                    "amount": -12.34,
-                    "merchantName": "Recon Test Coffee Shop",
-                    "categoryId": "cat1",
-                }
-            },
-        )
-    ]
+    assert fake_client.calls[-1] == (
+        "Common_CreateTransactionMutation",
+        {
+            "input": {
+                "date": "2026-09-28",
+                "shouldUpdateBalance": True,
+                "accountId": "acc1",
+                "ownerUserId": None,
+                "amount": -12.34,
+                "merchantName": "Recon Test Coffee Shop",
+                "categoryId": "cat1",
+            }
+        },
+    )
     assert result == {
         "createTransaction": {"transaction": {"id": "t1"}, "errors": None}
     }
@@ -254,6 +318,9 @@ async def test_create_transaction_sends_full_input(fake_client):
 
 @pytest.mark.asyncio
 async def test_create_transaction_surfaces_errors_on_bad_id(fake_client):
+    fake_client.responses["Web_GetAccountsPage"] = _accounts_page_response(
+        [{"id": "bogus", "displayName": "Manual Cash", "credential": None}]
+    )
     fake_client.responses["Common_CreateTransactionMutation"] = {
         "createTransaction": {
             "transaction": None,
@@ -268,6 +335,44 @@ async def test_create_transaction_surfaces_errors_on_bad_id(fake_client):
     assert result["createTransaction"]["errors"]["message"] == (
         "Account matching query does not exist."
     )
+
+
+@pytest.mark.asyncio
+async def test_create_transaction_rejects_unknown_account_id(fake_client):
+    fake_client.responses["Web_GetAccountsPage"] = _accounts_page_response(
+        [{"id": "acc1", "displayName": "Manual Cash", "credential": None}]
+    )
+    with pytest.raises(ValueError, match="wasn't found"):
+        await writes.create_transaction(
+            account_id="does-not-exist", date="2026-09-28", amount=-1,
+            merchant_name="x", category_id="cat1",
+        )
+    # must reject before ever calling the real mutation
+    assert fake_client.calls == [("Web_GetAccountsPage", {"filters": {}})]
+
+
+@pytest.mark.asyncio
+async def test_create_transaction_rejects_bank_linked_account(fake_client):
+    """Opus review 2026-09-28: Monarch's own mutation only rejects a
+    NONEXISTENT accountId, not a valid-but-linked one -- and there's no
+    delete_transaction tool to undo a phantom entry on a real bank feed.
+    A manual account's `credential` is null; a linked one has a real
+    credential object."""
+    fake_client.responses["Web_GetAccountsPage"] = _accounts_page_response(
+        [
+            {
+                "id": "linked1",
+                "displayName": "Real Checking",
+                "credential": {"id": "cred1", "dataProvider": "plaid"},
+            }
+        ]
+    )
+    with pytest.raises(ValueError, match="bank-linked account"):
+        await writes.create_transaction(
+            account_id="linked1", date="2026-09-28", amount=-1,
+            merchant_name="x", category_id="cat1",
+        )
+    assert fake_client.calls == [("Web_GetAccountsPage", {"filters": {}})]
 
 
 @pytest.mark.asyncio

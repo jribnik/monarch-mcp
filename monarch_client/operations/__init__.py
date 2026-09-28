@@ -25,15 +25,18 @@ PROVENANCE records, per operation, what was true at vendoring time:
     hand-repaired file's vendored_sha256 will NEVER match
     catalog_query_hash, by construction -- see `note` for what was restored
     and where it came from.
-  - walk_reachable: False (added 2026-09-28) marks a MUTATION -- an
-    operation the nightly read-only walk can never re-observe in the live
-    catalog no matter how healthy the walk is, so `doctor`'s drift check
-    treats a permanent "not in current catalog" result as expected and
-    prints [skip] rather than [warn]. Distinct from catalog_query_hash
-    being None (a deliberate hand-picked subset, never catalog-exported at
-    all): these 5 operations DO have a real hash, recorded from when they
-    were genuinely vendored via `recon export-ops` -- they just can't be
-    re-confirmed by a walk that only performs reads. Every other entry
+  - walk_reachable: False (added 2026-09-28) marks an operation the nightly
+    read-only walk can never re-observe in the live catalog -- usually
+    because it's a MUTATION, but not always: a couple of entries (see each
+    one's own note) are plain queries that just happen to only ever get
+    triggered by a UI flow (e.g. manual-account creation) the walk doesn't
+    visit. Either way `doctor`'s drift check treats a permanent "not in
+    current catalog" result as expected and prints [skip] rather than
+    [warn]. Distinct from catalog_query_hash being None (a deliberate
+    hand-picked subset, never catalog-exported at all): every
+    walk_reachable=False operation DOES have a real hash, recorded from
+    when it was genuinely vendored via `recon export-ops` -- it just can't
+    be re-confirmed by a walk that only performs reads. Every other entry
     omits this key; its absence means "reachable", not "unreachable".
 """
 

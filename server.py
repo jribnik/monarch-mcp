@@ -338,8 +338,13 @@ async def create_transaction(
     Create a manual transaction on a manual (non-bank-linked) account -- e.g. cash
     spending. date is 'YYYY-MM-DD'. amount is signed like every other tool here:
     negative = expense, positive = income/credit. Use get_categories for category_id
-    and list_accounts for account_id (must be a manual account, not one synced from a
-    bank). A bad account_id/category_id returns a real error, doesn't fail silently.
+    and list_accounts for account_id -- account_id MUST be a manual account (this is
+    enforced: a bank-linked account_id is rejected before the mutation ever fires,
+    since there's no delete_transaction tool to undo a phantom entry on a real bank
+    feed). A nonexistent account_id/category_id also returns a real error, doesn't
+    fail silently. merchant_name is NOT validated against existing merchants (unlike
+    create_transaction_rule's set_merchant_name) -- a new string creates a new
+    merchant, same as the real app's manual-entry form.
     """
     return await client_writes.create_transaction(
         account_id=account_id,
@@ -361,8 +366,8 @@ async def create_manual_account(
     """
     Create a manual (non-bank-linked) account, e.g. cash or a manually-tracked
     asset. account_type/account_subtype must be a valid pair from
-    get_account_type_options -- call that first. A bad pair returns a real error,
-    doesn't fail silently.
+    get_account_type_options -- call that first. A bad pair raises a real error
+    (the call fails loudly), doesn't fail silently.
     """
     return await client_writes.create_manual_account(
         name=name,

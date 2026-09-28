@@ -18,7 +18,7 @@ reachable on this machine -- flags any vendored operation whose catalog
 hash has drifted since it was vendored.
 
 With --op NAME: calls that one vendored operation with no variables (most
-of the 9 read ops need real variables -- see reads.py -- so this is a raw
+of the 10 read ops need real variables -- see reads.py -- so this is a raw
 transport-level check, not a substitute for exercising the actual MCP
 tool).
 """
@@ -108,10 +108,11 @@ def _check_catalog_drift() -> None:
             continue
         if not entry.get("walk_reachable", True):
             print(
-                f"[skip] {op_name}: a mutation -- the nightly walk is "
-                "read-only and can never re-observe it in the live "
-                "catalog, so a permanent 'not in current catalog' [warn] "
-                "here would be noise, not drift (see its PROVENANCE note)"
+                f"[skip] {op_name}: a mutation, or a query the nightly "
+                "read-only walk never happens to visit (see its PROVENANCE "
+                "note for which) -- either way the walk can never "
+                "re-observe it in the live catalog, so a permanent 'not in "
+                "current catalog' [warn] here would be noise, not drift"
             )
             continue
         catalog_entry = catalog_ops.get(op_name)

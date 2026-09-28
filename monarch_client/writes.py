@@ -34,11 +34,16 @@ unresolved). See _verify_merchant_name_exists's docstring below.
 
 create_transaction and create_manual_account were also added 2026-09-28,
 closing the last two capability gaps flagged by an earlier design review
-(manual transaction/account creation). Both mutations DO validate their
-inputs server-side (a bad accountId/categoryId/type/subtype raises or
-returns a real errors.message rather than silently succeeding, verified
-live) -- unlike setMerchantAction, so neither needed a client-side
-validation gate of its own.
+(manual transaction/account creation). Both mutations DO validate
+accountId/categoryId/type/subtype EXISTENCE server-side (a bad id raises
+or returns a real errors.message rather than silently succeeding, verified
+live) -- unlike setMerchantAction. But an Opus review the same day caught
+that Monarch's existence check doesn't catch a valid-but-wrong-KIND id: a
+real, bank-linked accountId passed to create_transaction wouldn't be
+rejected, and there's no delete_transaction tool to undo the phantom entry
+that would create -- see _verify_account_is_manual, added as this
+function's own client-side gate. create_manual_account's type/subtype pair
+genuinely doesn't need one (verified live: an invalid pair raises).
 """
 
 from __future__ import annotations
@@ -65,22 +70,84 @@ async def _verify_merchant_name_exists(name: str) -> None:
     field just echoes the input back unresolved in both cases, so preview
     can't catch this either). Since Monarch won't validate this for us, we
     do it here: search existing transactions for an exact merchant.name
-    match before ever sending the mutation."""
-    found = await reads.get_transactions(search=name, limit=25)
+    match before ever sending the mutation.
+
+    Opus review 2026-09-28 caught a real gap: `search` is a substring match
+    over merchant name AND notes, date-ordered, and was originally capped at
+    25 -- on an account with years of history a short/common real merchant
+    name can get pushed out of the top N by newer transactions that merely
+    *contain* the string, producing a FALSE reject. That's safe by itself
+    (the gate can only over-block, never under-block), but the error
+    message used to just assert the name "doesn't exist" and list whatever
+    near-miss names it happened to see -- which could steer a retry toward
+    creating the WRONG merchant. Fixed by using `totalCount` to tell
+    "genuinely not found" apart from "search was truncated, can't confirm
+    either way" and saying so explicitly in the latter case instead of
+    implying the name search was exhaustive."""
+    found = await reads.get_transactions(search=name, limit=100)
+    all_transactions = found.get("allTransactions") or {}
+    results = all_transactions.get("results") or []
+    total_count = all_transactions.get("totalCount") or 0
     real_names = {
-        t["merchant"]["name"]
-        for t in (found.get("allTransactions") or {}).get("results") or []
-        if t.get("merchant")
+        t["merchant"]["name"] for t in results if t.get("merchant")
     }
-    if name not in real_names:
+    if name in real_names:
+        return
+    if total_count > len(results):
         raise ValueError(
-            f"set_merchant_name={name!r} doesn't exactly match any existing "
-            f"merchant found via a transaction search (found: "
-            f"{sorted(real_names) or 'none'}) -- setMerchantAction silently "
-            "CREATES A NEW MERCHANT with this exact string as its name if it "
-            "doesn't match one already, verified live. Get the exact name "
-            "from an existing transaction (e.g. get_transactions(search=...)) "
-            "before retrying."
+            f"set_merchant_name={name!r} wasn't among the first "
+            f"{len(results)} of {total_count} transactions matching that "
+            "search, so this check can't confirm whether it's a real "
+            "merchant name or not -- NOT proceeding, since a false negative "
+            "here is unsafe (setMerchantAction silently creates a new "
+            "merchant on a non-match, verified live). Narrow the search "
+            "(e.g. get_transactions(search=<name>, account_ids=[...])) and "
+            "copy the exact merchant.name from a real result."
+        )
+    raise ValueError(
+        f"set_merchant_name={name!r} doesn't exactly match any existing "
+        f"merchant found via a transaction search (found: "
+        f"{sorted(real_names) or 'none'}) -- setMerchantAction silently "
+        "CREATES A NEW MERCHANT with this exact string as its name if it "
+        "doesn't match one already, verified live. Get the exact name "
+        "from an existing transaction (e.g. get_transactions(search=...)) "
+        "before retrying."
+    )
+
+
+async def _verify_account_is_manual(account_id: str) -> None:
+    """Added after Opus review 2026-09-28. create_transaction is meant for
+    manual (non-Plaid) accounts only, but nothing was stopping it being
+    called against a real, bank-linked account -- Monarch's own mutation
+    only rejects a NONEXISTENT accountId (verified live: "Account matching
+    query does not exist."), it doesn't reject a valid-but-linked one. A
+    manual transaction forced onto a linked account would be a phantom
+    entry on a real bank feed, and there's no delete_transaction tool in
+    this client to undo it (create_tag/delete_tag exists; this doesn't).
+    Gate here instead: a manual account's `credential` field is null; a
+    linked one always has a real credential object (dataProvider,
+    institution, etc.) -- see Web_GetAccountsPage.graphql's
+    AccountListItemFields fragment."""
+    accounts = await reads.list_accounts()
+    match = next(
+        (a for a in accounts.get("accounts") or [] if a.get("id") == account_id),
+        None,
+    )
+    if match is None:
+        raise ValueError(
+            f"account_id={account_id!r} wasn't found in list_accounts() -- "
+            "double-check the id before retrying."
+        )
+    if match.get("credential") is not None:
+        raise ValueError(
+            f"account_id={account_id!r} ({match.get('displayName')!r}) is a "
+            "bank-linked account (it has a credential), not a manual one. "
+            "create_transaction is for MANUAL accounts only -- forcing a "
+            "manual transaction onto a linked account creates a phantom "
+            "entry on a real bank feed with no way to remove it through "
+            "this server (there is no delete_transaction tool). Use "
+            "create_manual_account first if you need a new account to "
+            "record this against."
         )
 
 
@@ -208,11 +275,18 @@ async def create_transaction(
     """Added 2026-09-28. Creates a manual transaction on a manual (non-
     Plaid-linked) account. amount is signed the same way as every other
     write op here: negative = expense, positive = credit/income (verified
-    live against monarch-sandbox). Unlike set_merchant_name, no client-side
-    validation gate is needed: Monarch validates accountId/categoryId
-    server-side and returns a real errors.message with transaction=null on
-    a bad id, verified live -- see Common_CreateTransactionMutation's
-    PROVENANCE note."""
+    live against monarch-sandbox). Monarch validates accountId/categoryId
+    server-side for EXISTENCE and returns a real errors.message with
+    transaction=null on a nonexistent id, verified live -- see
+    Common_CreateTransactionMutation's PROVENANCE note -- but does not
+    reject a valid, bank-linked accountId, so _verify_account_is_manual
+    runs first (see its own docstring: no delete_transaction tool exists
+    to undo a mistake here). merchant_name itself is NOT validated by
+    either Monarch or this client -- an arbitrary string creates a new
+    merchant if it doesn't match an existing one exactly, same as the real
+    web app's manual-entry form; that's expected here, unlike
+    set_merchant_name on the rule tools."""
+    await _verify_account_is_manual(account_id)
     data = await _call(
         "Common_CreateTransactionMutation",
         {
