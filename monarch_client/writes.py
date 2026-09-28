@@ -22,6 +22,15 @@ added while monarch-sandbox still existed, ahead of its planned deletion
 (it's the safety net for developing/verifying any write, so remaining
 write-path work was prioritized while it was still available -- see
 project memory).
+
+set_merchant_name (preview/create_transaction_rule) was also added
+2026-09-28. Its real shape -- a merchant NAME string, not an id -- and the
+need for _verify_merchant_name_exists were both discovered by live testing
+against monarch-sandbox: setMerchantAction has no server-side validation at
+all and silently creates a brand-new garbage merchant named after whatever
+string it's given (reproduced with both a raw id and a typo'd name; preview
+doesn't catch it either -- its `newName` field just echoes the input back
+unresolved). See _verify_merchant_name_exists's docstring below.
 """
 
 from __future__ import annotations
@@ -29,12 +38,42 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from . import MonarchClient, project
+from . import reads
 
 _client = MonarchClient()
 
 
 async def _call(op_name: str, variables: dict[str, Any]) -> dict[str, Any]:
     return await _client.call(op_name, variables)
+
+
+async def _verify_merchant_name_exists(name: str) -> None:
+    """setMerchantAction has NO server-side validation: verified live
+    2026-09-28 against monarch-sandbox that passing a name (or, worse, a raw
+    merchant id) that doesn't exactly match an existing merchant does not
+    error in either preview or create -- it SILENTLY CREATES a brand-new
+    garbage merchant literally named after the string given (reproduced
+    twice: once with a raw id, once with a typo'd name; preview's `newName`
+    field just echoes the input back unresolved in both cases, so preview
+    can't catch this either). Since Monarch won't validate this for us, we
+    do it here: search existing transactions for an exact merchant.name
+    match before ever sending the mutation."""
+    found = await reads.get_transactions(search=name, limit=25)
+    real_names = {
+        t["merchant"]["name"]
+        for t in (found.get("allTransactions") or {}).get("results") or []
+        if t.get("merchant")
+    }
+    if name not in real_names:
+        raise ValueError(
+            f"set_merchant_name={name!r} doesn't exactly match any existing "
+            f"merchant found via a transaction search (found: "
+            f"{sorted(real_names) or 'none'}) -- setMerchantAction silently "
+            "CREATES A NEW MERCHANT with this exact string as its name if it "
+            "doesn't match one already, verified live. Get the exact name "
+            "from an existing transaction (e.g. get_transactions(search=...)) "
+            "before retrying."
+        )
 
 
 def _rule_input_common(
@@ -45,12 +84,19 @@ def _rule_input_common(
     category_ids: Optional[list[str]],
     account_ids: Optional[list[str]],
     set_category_action: Optional[str],
+    set_merchant_name: Optional[str],
 ) -> dict[str, Any]:
     """Shared field-building for preview/create_transaction_rule -- matches
     _audit/monarchmoney/monarchmoney.py's own rule_input construction
     (always-sent keys default to None; merchantNameCriteria/
     originalStatementCriteria are added only when given, since the library
-    demonstrated live that this is what the API expects)."""
+    demonstrated live that this is what the API expects).
+
+    set_merchant_name is the real (verified live 2026-09-28) shape of
+    setMerchantAction: a plain merchant NAME string, not an id -- an id
+    silently creates a garbage merchant named after the id string instead of
+    linking the existing one. See _verify_merchant_name_exists, which both
+    callers below run first."""
     rule_input: dict[str, Any] = {
         "merchantCriteriaUseOriginalStatement": False,
         "merchantCriteria": None,
@@ -59,7 +105,7 @@ def _rule_input_common(
         "accountIds": account_ids,
         "setCategoryAction": set_category_action,
         "addTagsAction": None,
-        "setMerchantAction": None,
+        "setMerchantAction": set_merchant_name,
         "splitTransactionsAction": None,
     }
     if merchant_name_criteria is not None:
@@ -93,7 +139,10 @@ async def preview_transaction_rule(
     category_ids: Optional[list[str]] = None,
     account_ids: Optional[list[str]] = None,
     set_category_action: Optional[str] = None,
+    set_merchant_name: Optional[str] = None,
 ) -> dict[str, Any]:
+    if set_merchant_name is not None:
+        await _verify_merchant_name_exists(set_merchant_name)
     rule_input = _rule_input_common(
         merchant_name_criteria=merchant_name_criteria,
         original_statement_criteria=original_statement_criteria,
@@ -101,6 +150,7 @@ async def preview_transaction_rule(
         category_ids=category_ids,
         account_ids=account_ids,
         set_category_action=set_category_action,
+        set_merchant_name=set_merchant_name,
     )
     rule_input["applyToExistingTransactions"] = False
     data = await _call(
@@ -116,8 +166,11 @@ async def create_transaction_rule(
     category_ids: Optional[list[str]] = None,
     account_ids: Optional[list[str]] = None,
     set_category_action: Optional[str] = None,
+    set_merchant_name: Optional[str] = None,
     apply_to_existing_transactions: bool = False,
 ) -> dict[str, Any]:
+    if set_merchant_name is not None:
+        await _verify_merchant_name_exists(set_merchant_name)
     rule_input = _rule_input_common(
         merchant_name_criteria=merchant_name_criteria,
         original_statement_criteria=original_statement_criteria,
@@ -125,6 +178,7 @@ async def create_transaction_rule(
         category_ids=category_ids,
         account_ids=account_ids,
         set_category_action=set_category_action,
+        set_merchant_name=set_merchant_name,
     )
     rule_input["applyToExistingTransactions"] = apply_to_existing_transactions
     data = await _call("Common_CreateTransactionRuleMutationV2", {"input": rule_input})

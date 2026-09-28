@@ -217,6 +217,7 @@ async def preview_transaction_rule(
     category_ids: Optional[list[str]] = None,
     account_ids: Optional[list[str]] = None,
     set_category_action: Optional[str] = None,
+    set_merchant_name: Optional[str] = None,
 ) -> dict[str, Any]:
     """
     Preview which EXISTING transactions a candidate rule would match and what it
@@ -237,6 +238,12 @@ async def preview_transaction_rule(
       categories/accounts
     - set_category_action: the category_id the rule would assign (for preview
       display only -- pass the id from get_categories)
+    - set_merchant_name: the EXACT existing merchant name the rule would rename
+      matches to (get it from an existing transaction, e.g. get_transactions or
+      get_transaction_rules -- never guess or pass an id). This is enforced: a
+      name that doesn't exactly match an existing merchant raises an error here,
+      because Monarch itself does not validate this and will silently create a
+      brand-new garbage merchant named after whatever string it's given.
     """
     return await client_writes.preview_transaction_rule(
         merchant_name_criteria=merchant_name_criteria,
@@ -245,6 +252,7 @@ async def preview_transaction_rule(
         category_ids=category_ids,
         account_ids=account_ids,
         set_category_action=set_category_action,
+        set_merchant_name=set_merchant_name,
     )
 
 
@@ -256,6 +264,7 @@ async def create_transaction_rule(
     category_ids: Optional[list[str]] = None,
     account_ids: Optional[list[str]] = None,
     set_category_action: Optional[str] = None,
+    set_merchant_name: Optional[str] = None,
     apply_to_existing_transactions: bool = False,
 ) -> dict[str, Any]:
     """
@@ -269,6 +278,11 @@ async def create_transaction_rule(
     applied to every matching historical transaction (defaults to False --
     forward-looking only, which is usually what you want if you've already
     fixed the historical ones by hand).
+
+    set_merchant_name must be an EXACT existing merchant name (see
+    preview_transaction_rule's docstring) -- this is enforced, since Monarch
+    itself will silently create a new garbage merchant instead of erroring on
+    a name that doesn't match one exactly.
     """
     return await client_writes.create_transaction_rule(
         merchant_name_criteria=merchant_name_criteria,
@@ -277,6 +291,7 @@ async def create_transaction_rule(
         category_ids=category_ids,
         account_ids=account_ids,
         set_category_action=set_category_action,
+        set_merchant_name=set_merchant_name,
         apply_to_existing_transactions=apply_to_existing_transactions,
     )
 

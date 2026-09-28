@@ -200,7 +200,19 @@ PROVENANCE: dict[str, dict] = {
             "This op is itself a QUERY, not a mutation (confirmed both by the "
             "'query' keyword and by re-checking rule state after calling it) "
             "-- it's grouped with monarch-mcp's 'write tools' only because "
-            "its natural workflow companion (create_transaction_rule) is one."
+            "its natural workflow companion (create_transaction_rule) is one. "
+            "setMerchantAction finding (2026-09-28, live against "
+            "monarch-sandbox): the real shape is a plain merchant NAME "
+            "string, not an id -- passing an id 'succeeds' with no error but "
+            "the response's newName echoes the raw id back unresolved. This "
+            "preview op does NOT validate the name at all: a bogus/typo'd "
+            "name also 'succeeds' with newName echoing it back unresolved, "
+            "identically to the bad-id case -- so preview cannot be used as "
+            "a safety check for setMerchantAction (unlike setCategoryAction, "
+            "which correctly resolves to a full object here). writes.py's "
+            "_verify_merchant_name_exists() does the validation client-side "
+            "instead, since neither this op nor the create mutation below "
+            "will."
         ),
     },
     "Common_CreateTransactionRuleMutationV2": {
@@ -222,7 +234,19 @@ PROVENANCE: dict[str, dict] = {
             "match, confirmed it appeared via get_transaction_rules, deleted "
             "it (see Common_DeleteTransactionRule), confirmed it was gone -- "
             "twice, on two separate test rules, 2026-09-24. Variables: "
-            "{'input': {...}} -- see writes.py for the full field set."
+            "{'input': {...}} -- see writes.py for the full field set. "
+            "setMerchantAction finding (2026-09-28, live against "
+            "monarch-sandbox): this mutation has NO server-side validation "
+            "of the merchant name/id given. First test used a raw merchant "
+            "id, which 'succeeded' with errors=None but actually created a "
+            "brand-new garbage merchant literally named after the id string "
+            "(confirmed via get_transaction_rules read-back -- new merchant "
+            "id, unrelated to the original). Correct shape is a plain "
+            "merchant NAME string, which matches (not duplicates) an "
+            "existing merchant of that exact name. Since Common_"
+            "PreviewTransactionRule above also can't catch a bad name, "
+            "writes.py's create_transaction_rule() runs "
+            "_verify_merchant_name_exists() first."
         ),
     },
     "Web_TransactionDrawerUpdateTransaction": {

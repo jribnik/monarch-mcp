@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from monarch_client import writes
+from monarch_client import reads, writes
 
 
 class _FakeClient:
@@ -26,6 +26,11 @@ class _FakeClient:
 def fake_client(monkeypatch):
     client = _FakeClient({})
     monkeypatch.setattr(writes, "_client", client)
+    # set_merchant_name's safety check (_verify_merchant_name_exists) calls
+    # reads.get_transactions, which uses reads.py's own module-level
+    # _client -- share the same fake so both modules' calls are visible on
+    # one .calls log.
+    monkeypatch.setattr(reads, "_client", client)
     return client
 
 
@@ -85,6 +90,67 @@ async def test_preview_transaction_rule_omits_criteria_keys_when_not_given(fake_
     _, variables = fake_client.calls[0]
     assert "merchantNameCriteria" not in variables["rule"]
     assert "originalStatementCriteria" not in variables["rule"]
+
+
+@pytest.mark.asyncio
+async def test_preview_transaction_rule_accepts_exact_matching_merchant_name(fake_client):
+    fake_client.responses["Web_GetTransactionsList"] = {
+        "allTransactions": {
+            "totalCount": 1,
+            "results": [{"merchant": {"name": "Recon Test Coffee Shop"}}],
+        }
+    }
+    fake_client.responses["Common_PreviewTransactionRule"] = {
+        "transactionRulePreview": {"totalCount": 0, "results": []}
+    }
+    await writes.preview_transaction_rule(set_merchant_name="Recon Test Coffee Shop")
+    op_names = [call[0] for call in fake_client.calls]
+    assert op_names == ["Web_GetTransactionsList", "Common_PreviewTransactionRule"]
+    _, rule_variables = fake_client.calls[1]
+    assert rule_variables["rule"]["setMerchantAction"] == "Recon Test Coffee Shop"
+
+
+@pytest.mark.asyncio
+async def test_preview_transaction_rule_rejects_nonexistent_merchant_name(fake_client):
+    """setMerchantAction has no server-side validation -- verified live
+    2026-09-28 that a non-matching name silently creates a garbage merchant
+    instead of erroring. This client-side check is what actually prevents
+    that; must reject before ever calling the real op."""
+    fake_client.responses["Web_GetTransactionsList"] = {
+        "allTransactions": {"totalCount": 0, "results": []}
+    }
+    with pytest.raises(ValueError, match="doesn't exactly match"):
+        await writes.preview_transaction_rule(
+            set_merchant_name="Definitely Not A Real Merchant XYZ123"
+        )
+    # must reject before ever calling the real (write-adjacent) op
+    assert fake_client.calls == [
+        (
+            "Web_GetTransactionsList",
+            {
+                "offset": 0,
+                "limit": 25,
+                "orderBy": "date",
+                "filters": {
+                    "search": "Definitely Not A Real Merchant XYZ123",
+                    "categories": [],
+                    "accounts": [],
+                    "tags": [],
+                    "transactionVisibility": "non_hidden_transactions_only",
+                },
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_create_transaction_rule_rejects_nonexistent_merchant_name(fake_client):
+    fake_client.responses["Web_GetTransactionsList"] = {
+        "allTransactions": {"totalCount": 0, "results": []}
+    }
+    with pytest.raises(ValueError, match="doesn't exactly match"):
+        await writes.create_transaction_rule(set_merchant_name="Not Real")
+    assert fake_client.calls == [("Web_GetTransactionsList", fake_client.calls[0][1])]
 
 
 @pytest.mark.asyncio
