@@ -9,15 +9,18 @@ requires-python = ">=3.11"
 dependencies = [
     "mcp[cli]>=1.2.0,<2",
     "httpx>=0.28",
-    "gql<4",
-    "monarchmoney-enhanced @ git+https://github.com/keithah/monarchmoney-enhanced@159d36e7ea07dbdc4b3a28193d89ef5c2c36f548",
 ]
 
 # This is a local-only package: not published, no console entry points. The
 # pyproject exists purely for reproducibility -- so pytest can find
 # monarch_client without cwd tricks, and so dependencies/Python version live
-# in one place instead of tribal knowledge (see README's own pip-install
-# recipe, which this mirrors: mcp[cli]/gql are pinned there for the same
-# compatibility reasons -- see README's Compatibility fixes section).
+# in one place instead of tribal knowledge.
+#
+# gql/monarchmoney-enhanced removed 2026-09-28: MONARCH_MCP_BACKEND flipped
+# from "library" to "client" after a 3-day dual-mode soak found no
+# structural problems, and the legacy dispatch layer (backend.py) plus the
+# monarchmoney-enhanced-backed root-level auth.py/config.py/diag_login.py
+# were retired in the same pass -- monarch_client (this package) has no
+# dependency on either and never did.
 [tool.setuptools]
 packages = ["monarch_client", "monarch_client.operations"]

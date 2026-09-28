@@ -138,6 +138,7 @@ For a NEW write operation (or to re-verify an existing one):
    vendored op (see above).
 5. Verify live: call the new op directly, confirm no errors, confirm the
    expected state change via a follow-up read -- then verify again through
-   the actual `server.py` tool function with `MONARCH_MCP_CLIENT_TOOLS` set
-   and `MONARCH_CLIENT_SITE=monarch-sandbox` explicitly asserted in the
-   script before anything mutates.
+   the actual `server.py` tool function with `MONARCH_CLIENT_SITE=monarch-sandbox`
+   explicitly asserted in the script before anything mutates (server.py has
+   called `monarch_client` directly, with no backend-selection layer, since
+   the 2026-09-28 flip -- see server.py's own module docstring).
