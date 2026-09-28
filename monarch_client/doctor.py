@@ -106,6 +106,14 @@ def _check_catalog_drift() -> None:
         if vendored_hash is None:
             print(f"[skip] {op_name}: vendored as a deliberate subset, not a verbatim export")
             continue
+        if not entry.get("walk_reachable", True):
+            print(
+                f"[skip] {op_name}: a mutation -- the nightly walk is "
+                "read-only and can never re-observe it in the live "
+                "catalog, so a permanent 'not in current catalog' [warn] "
+                "here would be noise, not drift (see its PROVENANCE note)"
+            )
+            continue
         catalog_entry = catalog_ops.get(op_name)
         if catalog_entry is None:
             print(f"[warn] {op_name}: not in current catalog (removed or renamed?)")

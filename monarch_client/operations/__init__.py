@@ -25,6 +25,16 @@ PROVENANCE records, per operation, what was true at vendoring time:
     hand-repaired file's vendored_sha256 will NEVER match
     catalog_query_hash, by construction -- see `note` for what was restored
     and where it came from.
+  - walk_reachable: False (added 2026-09-28) marks a MUTATION -- an
+    operation the nightly read-only walk can never re-observe in the live
+    catalog no matter how healthy the walk is, so `doctor`'s drift check
+    treats a permanent "not in current catalog" result as expected and
+    prints [skip] rather than [warn]. Distinct from catalog_query_hash
+    being None (a deliberate hand-picked subset, never catalog-exported at
+    all): these 5 operations DO have a real hash, recorded from when they
+    were genuinely vendored via `recon export-ops` -- they just can't be
+    re-confirmed by a walk that only performs reads. Every other entry
+    omits this key; its absence means "reachable", not "unreachable".
 """
 
 from __future__ import annotations
@@ -140,6 +150,9 @@ PROVENANCE: dict[str, dict] = {
     },
     "Common_CreateTransactionTag": {
         "catalog_query_hash": "8545d3e93331912b0c209c33d145ce9b28f0daba8bbb4272e32892cb87fbdc94",
+        # A mutation -- see Common_CreateTransactionRuleMutationV2's comment
+        # above for why this is walk_reachable=False, not a real drift risk.
+        "walk_reachable": False,
         "vendored_sha256": "e4b64d141271fce99969b24ec7fd0d1714399aca26aada45c2364d25006fee32",
         "exported_at": "2026-09-24T18:47:14.885538+00:00",
         "runs_seen": ["2026-09-24T18-44-59Z"],
@@ -168,6 +181,9 @@ PROVENANCE: dict[str, dict] = {
     },
     "Common_PreviewTransactionRule": {
         "catalog_query_hash": "4e7341ba4d62c4556764600293ec79e875fb7485c1683eada0d2a24971000617",
+        # A mutation-shaped operation -- see Common_CreateTransactionRuleMutationV2's
+        # comment above for why this is walk_reachable=False.
+        "walk_reachable": False,
         "vendored_sha256": "018ee6ed6e8d8e9b51b93cd041a572c208278e405c9335d0af79b3ddbd39f583",
         "exported_at": "2026-09-24T20:53:48.396427+00:00",
         "runs_seen": ["2026-09-24T19-44-40Z", "2026-09-24T20-52-07Z"],
@@ -188,6 +204,13 @@ PROVENANCE: dict[str, dict] = {
     },
     "Common_CreateTransactionRuleMutationV2": {
         "catalog_query_hash": "ae5c96e2335256ff62d0e9527b51b3630d59b5960699aacbf30ea74591a132b6",
+        # A mutation -- the nightly read-only walk can never re-observe it in
+        # the live catalog, so doctor.py's drift check treats a "not in
+        # current catalog" result here as expected, not a warning. Found
+        # 2026-09-28: this and 4 other write ops had been firing a permanent
+        # nightly [warn] since vendoring, exactly the "crying wolf" failure
+        # this flag already fixed for Skylight's own write endpoints.
+        "walk_reachable": False,
         "vendored_sha256": "553fd17351a0db2631c2191490c65981e8ec33bf776df9c3f06d53db3484c186",
         "exported_at": "2026-09-24T20:53:48.397164+00:00",
         "runs_seen": ["2026-09-24T19-44-40Z", "2026-09-24T20-52-07Z"],
@@ -203,6 +226,9 @@ PROVENANCE: dict[str, dict] = {
     },
     "Web_TransactionDrawerUpdateTransaction": {
         "catalog_query_hash": "caff6fe20bf0acd3e483469b3d7934cec81b5134514d0edbcbb6f3cf02268792",
+        # A mutation -- see Common_CreateTransactionRuleMutationV2's comment
+        # above for why this is walk_reachable=False.
+        "walk_reachable": False,
         "vendored_sha256": "b7991f170284c316cfb129d7c9352fe127229d28719cda1f64e538d0ff6b334e",
         "exported_at": "2026-09-24T22:54:24.715141+00:00",
         "runs_seen": ["2026-09-24T22-51-40Z"],
@@ -222,6 +248,9 @@ PROVENANCE: dict[str, dict] = {
     },
     "Web_SetTransactionTags": {
         "catalog_query_hash": "f6c8172275e0001ed57bb548f58bda80a269d1a425c88811a6b65610f582723e",
+        # A mutation -- see Common_CreateTransactionRuleMutationV2's comment
+        # above for why this is walk_reachable=False.
+        "walk_reachable": False,
         "vendored_sha256": "5f99fb1a1e41fad51667e6856a08e9fef51485dfcefe91e5e2df78f482d203e5",
         "exported_at": "2026-09-24T23:02:55.662381+00:00",
         "runs_seen": ["2026-09-24T23-00-38Z"],
