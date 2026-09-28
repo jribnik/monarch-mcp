@@ -357,6 +357,84 @@ PROVENANCE: dict[str, dict] = {
             "with no trace of the test tag."
         ),
     },
+    "Common_GetAccountTypeOptions": {
+        "catalog_query_hash": "76bba0f2a73552e85de9eca1a711a5976acaf3e4a63bd635820ef8da8ccc33b6",
+        "walk_reachable": False,
+        "vendored_sha256": "d281be1bf2d7eae7fec70562b7c784d603170ada6f16131827982b5dd0c88654",
+        "exported_at": "2026-09-28T19:57:11.546898+00:00",
+        "runs_seen": ["2026-09-24T22-37-20Z"],
+        "hand_repaired": False,
+        "note": (
+            "backs get_account_type_options -- lists every valid "
+            "(type.name, subtype.name) pair for create_manual_account's "
+            "type/subtype arguments. Captured against monarch-sandbox but "
+            "schema-level/account-agnostic (same precedent as "
+            "Common_DeleteHouseholdTransactionTag above): every account, "
+            "real or sandbox, has the same set of valid account types. "
+            "walk_reachable=False because it was only ever observed "
+            "incidentally during a mutation-focused capture run, not by the "
+            "read-only nightly walk -- not because it's a mutation itself "
+            "(it's a query); doctor.py's drift check would just show a "
+            "spurious [warn] otherwise since the nightly walk never visits "
+            "the manual-account-creation UI flow that triggers it."
+        ),
+    },
+    "Common_CreateTransactionMutation": {
+        "catalog_query_hash": "02412c5bace06080c7988bc0f0fc289cfab42d1f57e4c2c6c4d766500939680f",
+        # A mutation -- see Common_CreateTransactionRuleMutationV2's comment
+        # above for why this is walk_reachable=False.
+        "walk_reachable": False,
+        "vendored_sha256": "f542abc5a2c3a78e2b1a7fcca7092977b29ca34e19d8ffaab355dc9196e84e93",
+        "exported_at": "2026-09-28T19:55:27.457176+00:00",
+        "runs_seen": ["2026-09-24T22-44-26Z"],
+        "hand_repaired": False,
+        "note": (
+            "backs create_transaction -- creates a manual transaction on a "
+            "manual (non-Plaid-linked) account. Variables: {'input': "
+            "{'date', 'shouldUpdateBalance': True, 'accountId', "
+            "'ownerUserId': None, 'amount', 'merchantName', 'categoryId'}} "
+            "(field names recovered from the raw HAR request body, since "
+            "the query text itself only declares an opaque "
+            "$input: CreateTransactionMutationInput! with no field list). "
+            "amount is signed the same way every other write op in this "
+            "client uses it -- negative = expense, positive = credit/income "
+            "(verified live 2026-09-28: -12.34 read back as a $12.34 "
+            "expense via get_transaction_details). Unlike setMerchantAction "
+            "(see Common_PreviewTransactionRule/"
+            "Common_CreateTransactionRuleMutationV2 above), this mutation "
+            "DOES validate both accountId and categoryId server-side -- a "
+            "bogus id returns a real `errors.message` (\"Account matching "
+            "query does not exist.\" / \"Category matching query does not "
+            "exist.\") with transaction=null, verified live 2026-09-28 -- so "
+            "no extra client-side validation gate was added here, unlike "
+            "_verify_merchant_name_exists()."
+        ),
+    },
+    "Web_CreateManualAccount": {
+        "catalog_query_hash": "6f78c21172cc7e782880cdf4d9225aed9c5b288d006af9b7b8d8f102fc6c6e7c",
+        # A mutation -- see Common_CreateTransactionRuleMutationV2's comment
+        # above for why this is walk_reachable=False.
+        "walk_reachable": False,
+        "vendored_sha256": "33b93e1bb6addaeac66303067422b527d4cb2d50243b002f9088fc4aea32493d",
+        "exported_at": "2026-09-28T19:55:27.457900+00:00",
+        "runs_seen": ["2026-09-24T22-37-20Z"],
+        "hand_repaired": False,
+        "note": (
+            "backs create_manual_account -- creates a manual (non-Plaid) "
+            "account, e.g. cash, a manually-tracked asset, etc. Variables: "
+            "{'input': {'type', 'subtype', 'includeInNetWorth', 'name', "
+            "'displayBalance', 'ownerUserId': None}} (field names recovered "
+            "from the raw HAR request body, same reason as "
+            "Common_CreateTransactionMutation above -- the query text's "
+            "$input type is opaque). type/subtype must be one of the pairs "
+            "listed by get_account_type_options (see "
+            "Common_GetAccountTypeOptions above) -- verified live 2026-09-28 "
+            "that Monarch DOES reject an invalid type/subtype server-side "
+            "(raises rather than silently succeeding, unlike "
+            "setMerchantAction's failure mode), so no client-side "
+            "validation gate was added here either."
+        ),
+    },
 }
 
 _cache: dict[str, str] = {}

@@ -1,5 +1,5 @@
 """
-The 9 read-side MCP tools, reimplemented on monarch_client instead of
+The 10 read-side MCP tools, reimplemented on monarch_client instead of
 monarchmoney-enhanced.
 
 Each function's signature mirrors its server.py counterpart exactly (same
@@ -163,3 +163,11 @@ async def get_recurring_transactions(
 async def get_transaction_rules() -> dict[str, Any]:
     data = await _call("Web_GetTransactionRules", {})
     return project.transaction_rules(data)
+
+
+async def get_account_type_options() -> dict[str, Any]:
+    """Added 2026-09-28 as create_manual_account's discoverability
+    companion (same role get_categories/get_tags play for other writes) --
+    lists every valid (type.name, subtype.name) pair."""
+    data = await _call("Common_GetAccountTypeOptions", {})
+    return project.account_type_options(data)

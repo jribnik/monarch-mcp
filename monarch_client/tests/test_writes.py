@@ -220,6 +220,101 @@ async def test_delete_transaction_rule_defaults_missing_deleted_to_false(fake_cl
 
 
 @pytest.mark.asyncio
+async def test_create_transaction_sends_full_input(fake_client):
+    fake_client.responses["Common_CreateTransactionMutation"] = {
+        "createTransaction": {"transaction": {"id": "t1"}, "errors": None}
+    }
+    result = await writes.create_transaction(
+        account_id="acc1",
+        date="2026-09-28",
+        amount=-12.34,
+        merchant_name="Recon Test Coffee Shop",
+        category_id="cat1",
+    )
+    assert fake_client.calls == [
+        (
+            "Common_CreateTransactionMutation",
+            {
+                "input": {
+                    "date": "2026-09-28",
+                    "shouldUpdateBalance": True,
+                    "accountId": "acc1",
+                    "ownerUserId": None,
+                    "amount": -12.34,
+                    "merchantName": "Recon Test Coffee Shop",
+                    "categoryId": "cat1",
+                }
+            },
+        )
+    ]
+    assert result == {
+        "createTransaction": {"transaction": {"id": "t1"}, "errors": None}
+    }
+
+
+@pytest.mark.asyncio
+async def test_create_transaction_surfaces_errors_on_bad_id(fake_client):
+    fake_client.responses["Common_CreateTransactionMutation"] = {
+        "createTransaction": {
+            "transaction": None,
+            "errors": {"message": "Account matching query does not exist."},
+        }
+    }
+    result = await writes.create_transaction(
+        account_id="bogus", date="2026-09-28", amount=-1,
+        merchant_name="x", category_id="cat1",
+    )
+    assert result["createTransaction"]["transaction"] is None
+    assert result["createTransaction"]["errors"]["message"] == (
+        "Account matching query does not exist."
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_manual_account_sends_full_input(fake_client):
+    fake_client.responses["Web_CreateManualAccount"] = {
+        "createManualAccount": {"account": {"id": "acc1"}, "errors": None}
+    }
+    result = await writes.create_manual_account(
+        name="ZZZ Test Account",
+        account_type="depository",
+        account_subtype="checking",
+        display_balance=42.5,
+    )
+    assert fake_client.calls == [
+        (
+            "Web_CreateManualAccount",
+            {
+                "input": {
+                    "type": "depository",
+                    "subtype": "checking",
+                    "includeInNetWorth": True,
+                    "name": "ZZZ Test Account",
+                    "displayBalance": 42.5,
+                    "ownerUserId": None,
+                }
+            },
+        )
+    ]
+    assert result == {
+        "createManualAccount": {"account": {"id": "acc1"}, "errors": None}
+    }
+
+
+@pytest.mark.asyncio
+async def test_create_manual_account_respects_include_in_net_worth_false(fake_client):
+    fake_client.responses["Web_CreateManualAccount"] = {
+        "createManualAccount": {"account": {"id": "acc1"}, "errors": None}
+    }
+    await writes.create_manual_account(
+        name="x", account_type="depository", account_subtype="checking",
+        display_balance=1, include_in_net_worth=False,
+    )
+    _, variables = fake_client.calls[0]
+    assert variables["input"]["includeInNetWorth"] is False
+
+
+@pytest.mark.asyncio
 async def test_recategorize_transaction_sends_only_category(fake_client):
     fake_client.responses["Web_TransactionDrawerUpdateTransaction"] = {
         "updateTransaction": {"transaction": {"id": "t1"}, "errors": None}

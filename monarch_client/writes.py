@@ -6,15 +6,15 @@ named mutations below are callable, so a prompt-injection or a model
 mistake can't reach an arbitrary mutation. Each function's signature
 mirrors its server.py counterpart exactly, same as reads.py.
 
-9 write tools -- create_tag, delete_tag, preview_transaction_rule,
+11 write tools -- create_tag, delete_tag, preview_transaction_rule,
 create_transaction_rule, delete_transaction_rule, recategorize_transaction,
-update_transaction, set_transaction_tags, mark_stream_as_not_recurring --
-each captured and/or verified against a dedicated, disposable
-monarch-sandbox account (see operations/__init__.py's PROVENANCE for each
-op's exact provenance; two -- delete_transaction_rule and
-mark_stream_as_not_recurring -- were verified by direct functional call
-rather than a UI-driven HAR capture, each documented as an explicit
-exception in its own .graphql file). See operations/README.md.
+update_transaction, set_transaction_tags, mark_stream_as_not_recurring,
+create_transaction, create_manual_account -- each captured and/or verified
+against a dedicated, disposable monarch-sandbox account (see
+operations/__init__.py's PROVENANCE for each op's exact provenance; two --
+delete_transaction_rule and mark_stream_as_not_recurring -- were verified by
+direct functional call rather than a UI-driven HAR capture, each documented
+as an explicit exception in its own .graphql file). See operations/README.md.
 
 delete_tag was added 2026-09-28, closing a gap left open since the
 original 8-tool build (create_tag shipped with no delete counterpart) --
@@ -31,6 +31,14 @@ all and silently creates a brand-new garbage merchant named after whatever
 string it's given (reproduced with both a raw id and a typo'd name; preview
 doesn't catch it either -- its `newName` field just echoes the input back
 unresolved). See _verify_merchant_name_exists's docstring below.
+
+create_transaction and create_manual_account were also added 2026-09-28,
+closing the last two capability gaps flagged by an earlier design review
+(manual transaction/account creation). Both mutations DO validate their
+inputs server-side (a bad accountId/categoryId/type/subtype raises or
+returns a real errors.message rather than silently succeeding, verified
+live) -- unlike setMerchantAction, so neither needed a client-side
+validation gate of its own.
 """
 
 from __future__ import annotations
@@ -188,6 +196,66 @@ async def create_transaction_rule(
 async def delete_transaction_rule(rule_id: str) -> dict[str, Any]:
     data = await _call("Common_DeleteTransactionRule", {"id": rule_id})
     return project.delete_transaction_rule_result(data)
+
+
+async def create_transaction(
+    account_id: str,
+    date: str,
+    amount: float,
+    merchant_name: str,
+    category_id: str,
+) -> dict[str, Any]:
+    """Added 2026-09-28. Creates a manual transaction on a manual (non-
+    Plaid-linked) account. amount is signed the same way as every other
+    write op here: negative = expense, positive = credit/income (verified
+    live against monarch-sandbox). Unlike set_merchant_name, no client-side
+    validation gate is needed: Monarch validates accountId/categoryId
+    server-side and returns a real errors.message with transaction=null on
+    a bad id, verified live -- see Common_CreateTransactionMutation's
+    PROVENANCE note."""
+    data = await _call(
+        "Common_CreateTransactionMutation",
+        {
+            "input": {
+                "date": date,
+                "shouldUpdateBalance": True,
+                "accountId": account_id,
+                "ownerUserId": None,
+                "amount": amount,
+                "merchantName": merchant_name,
+                "categoryId": category_id,
+            }
+        },
+    )
+    return project.create_transaction_result(data)
+
+
+async def create_manual_account(
+    name: str,
+    account_type: str,
+    account_subtype: str,
+    display_balance: float,
+    include_in_net_worth: bool = True,
+) -> dict[str, Any]:
+    """Added 2026-09-28. Creates a manual (non-Plaid) account. account_type/
+    account_subtype must be a (type.name, subtype.name) pair from
+    get_account_type_options -- verified live that Monarch rejects an
+    invalid pair server-side (raises), so no extra client-side gate is
+    needed here either -- see Web_CreateManualAccount's PROVENANCE note."""
+    data = await _call(
+        "Web_CreateManualAccount",
+        {
+            "input": {
+                "type": account_type,
+                "subtype": account_subtype,
+                "includeInNetWorth": include_in_net_worth,
+                "name": name,
+                "displayBalance": display_balance,
+                "ownerUserId": None,
+            }
+        },
+    )
+    return project.create_manual_account_result(data)
 
 
 async def _update_transaction(

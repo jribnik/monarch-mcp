@@ -198,6 +198,13 @@ async def delete_tag(tag_id: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+async def get_account_type_options() -> dict[str, Any]:
+    """List every valid (type.name, subtype.name) pair for create_manual_account.
+    Use before calling it -- Monarch rejects an unlisted pair."""
+    return await client_reads.get_account_type_options()
+
+
+@mcp.tool()
 async def get_transaction_rules() -> dict[str, Any]:
     """
     List all transaction rules (auto-categorization rules), in priority order.
@@ -317,6 +324,53 @@ async def mark_stream_as_not_recurring(stream_id: str) -> dict[str, Any]:
     disappears on its own without needing this.
     """
     return await client_writes.mark_stream_as_not_recurring(stream_id)
+
+
+@mcp.tool()
+async def create_transaction(
+    account_id: str,
+    date: str,
+    amount: float,
+    merchant_name: str,
+    category_id: str,
+) -> dict[str, Any]:
+    """
+    Create a manual transaction on a manual (non-bank-linked) account -- e.g. cash
+    spending. date is 'YYYY-MM-DD'. amount is signed like every other tool here:
+    negative = expense, positive = income/credit. Use get_categories for category_id
+    and list_accounts for account_id (must be a manual account, not one synced from a
+    bank). A bad account_id/category_id returns a real error, doesn't fail silently.
+    """
+    return await client_writes.create_transaction(
+        account_id=account_id,
+        date=date,
+        amount=amount,
+        merchant_name=merchant_name,
+        category_id=category_id,
+    )
+
+
+@mcp.tool()
+async def create_manual_account(
+    name: str,
+    account_type: str,
+    account_subtype: str,
+    display_balance: float,
+    include_in_net_worth: bool = True,
+) -> dict[str, Any]:
+    """
+    Create a manual (non-bank-linked) account, e.g. cash or a manually-tracked
+    asset. account_type/account_subtype must be a valid pair from
+    get_account_type_options -- call that first. A bad pair returns a real error,
+    doesn't fail silently.
+    """
+    return await client_writes.create_manual_account(
+        name=name,
+        account_type=account_type,
+        account_subtype=account_subtype,
+        display_balance=display_balance,
+        include_in_net_worth=include_in_net_worth,
+    )
 
 
 if __name__ == "__main__":

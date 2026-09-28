@@ -1,0 +1,31 @@
+# source: recon catalog for 'monarch-sandbox', operation 'Web_CreateManualAccount'
+# query_hash: 6f78c21172cc7e782880cdf4d9225aed9c5b288d006af9b7b8d8f102fc6c6e7c
+# observed in run(s): 2026-09-24T22-37-20Z
+# last_seen: 2026-09-24T22:37:33.706000+00:00
+# exported: 2026-09-28T19:55:27.457900+00:00
+# NOT authoritative -- catalog is built from OBSERVED traffic, not a schema fetch.
+
+mutation Web_CreateManualAccount($input: CreateManualAccountMutationInput!) {
+  createManualAccount(input: $input) {
+    account {
+      id
+      __typename
+    }
+    errors {
+      ...PayloadErrorFields
+      __typename
+    }
+    __typename
+  }
+}
+
+fragment PayloadErrorFields on PayloadError {
+  fieldErrors {
+    field
+    messages
+    __typename
+  }
+  message
+  code
+  __typename
+}

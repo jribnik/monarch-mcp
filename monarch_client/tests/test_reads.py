@@ -223,3 +223,15 @@ async def test_get_transaction_rules(fake_client):
     result = await reads.get_transaction_rules()
     assert fake_client.calls == [("Web_GetTransactionRules", {})]
     assert result["transactionRules"][0]["id"] == "rule1"
+
+
+@pytest.mark.asyncio
+async def test_get_account_type_options(fake_client):
+    fake_client.responses["Common_GetAccountTypeOptions"] = {
+        "accountTypeOptions": [
+            {"type": {"name": "depository", "possibleSubtypes": [{"name": "checking"}]}}
+        ]
+    }
+    result = await reads.get_account_type_options()
+    assert fake_client.calls == [("Common_GetAccountTypeOptions", {})]
+    assert result["accountTypeOptions"][0]["type"]["name"] == "depository"

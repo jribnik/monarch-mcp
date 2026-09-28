@@ -1,0 +1,28 @@
+# source: recon catalog for 'monarch-sandbox', operation 'Common_GetAccountTypeOptions'
+# query_hash: 76bba0f2a73552e85de9eca1a711a5976acaf3e4a63bd635820ef8da8ccc33b6
+# observed in run(s): 2026-09-24T22-37-20Z
+# last_seen: 2026-09-24T22:37:31.830000+00:00
+# exported: 2026-09-28T19:57:11.546898+00:00
+# NOT authoritative -- catalog is built from OBSERVED traffic, not a schema fetch.
+
+query Common_GetAccountTypeOptions {
+  accountTypeOptions {
+    type {
+      name
+      display
+      group
+      possibleSubtypes {
+        display
+        name
+        __typename
+      }
+      __typename
+    }
+    subtype {
+      name
+      display
+      __typename
+    }
+    __typename
+  }
+}

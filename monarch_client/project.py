@@ -248,3 +248,34 @@ def transaction_rules(data: dict[str, Any], *, include_raw: bool = False) -> dic
     """Pass-through: `transactionRules` is the schema's field name, same
     as the old library used."""
     return _with_raw({"transactionRules": data.get("transactionRules") or []}, data, include_raw)
+
+
+def account_type_options(data: dict[str, Any], *, include_raw: bool = False) -> dict[str, Any]:
+    """Pass-through: `accountTypeOptions` is the schema's field name.
+    Each entry is `{type: {name, display, group, possibleSubtypes[]},
+    subtype}` -- create_manual_account's `type`/`subtype` args must be a
+    `type.name`/`possibleSubtypes[].name` pair from this list."""
+    return _with_raw(
+        {"accountTypeOptions": data.get("accountTypeOptions") or []}, data, include_raw
+    )
+
+
+def create_transaction_result(data: dict[str, Any], *, include_raw: bool = False) -> dict[str, Any]:
+    """Pass-through: `createTransaction.{transaction,errors}` -- verified
+    live against monarch-sandbox 2026-09-28 (created a real manual
+    transaction, confirmed via a follow-up get_transaction_details call;
+    also confirmed a bad accountId/categoryId surfaces a real
+    `errors.message` with transaction=null rather than failing silently)."""
+    return _with_raw({"createTransaction": data.get("createTransaction")}, data, include_raw)
+
+
+def create_manual_account_result(
+    data: dict[str, Any], *, include_raw: bool = False
+) -> dict[str, Any]:
+    """Pass-through: `createManualAccount.{account,errors}` -- verified live
+    against monarch-sandbox 2026-09-28 (created a real manual account,
+    confirmed via a follow-up list_accounts call; also confirmed an invalid
+    type/subtype raises rather than silently succeeding)."""
+    return _with_raw(
+        {"createManualAccount": data.get("createManualAccount")}, data, include_raw
+    )

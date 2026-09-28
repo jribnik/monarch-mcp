@@ -91,7 +91,7 @@ multi-kilobyte query changes by one field.
 
 ## Mutations
 
-All 9 write ops are vendored (full coverage). Every one was captured and/or
+All 11 write ops are vendored (full coverage). Every one was captured and/or
 verified against `monarch-sandbox` -- a dedicated, disposable Monarch
 account registered in api-recon's adapter registry
 (`~/src/api-recon/src/recon/adapters/__init__.py`), never the real

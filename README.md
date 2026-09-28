@@ -8,7 +8,7 @@ budgets, etc. Built to replace Monarch's own MCP server, which has been offline.
 Built entirely on [`monarch_client`](monarch_client/) — a self-contained client
 against Monarch's real GraphQL API, using plain HTTP + vendored query text
 captured from the real web app by [api-recon](https://github.com/jribnik/api-recon).
-**Full coverage: 9 read tools and 9 write tools**, all captured
+**Full coverage: 10 read tools and 11 write tools**, all captured
 and/or verified against a dedicated, disposable `monarch-sandbox` account
 before ever touching the real one. See `monarch_client/__init__.py`'s module
 docstring for the package's full shape.
@@ -110,14 +110,17 @@ Then restart Claude Code so it connects. Ask things like:
 | `get_transaction_rules` | read | auto-categorization rules |
 | `preview_transaction_rule` | read (write-adjacent) | dry-run a rule's match set |
 | `get_recurring_transactions` | read | recurring transaction streams |
+| `get_account_type_options` | read | valid type/subtype pairs for create_manual_account |
 | `recategorize_transaction` | **write** | set a transaction's category |
 | `update_transaction` | **write** | edit merchant/amount/date/notes/flags |
 | `set_transaction_tags` | **write** | replace a transaction's tags |
 | `create_tag` | **write** | create a new tag |
 | `delete_tag` | **write** | delete a tag by id |
-| `create_transaction_rule` | **write** | create an auto-categorization rule |
+| `create_transaction_rule` | **write** | create an auto-categorization rule (incl. renaming merchants) |
 | `delete_transaction_rule` | **write** | delete a rule by id |
 | `mark_stream_as_not_recurring` | **write** | dismiss a recurring stream |
+| `create_transaction` | **write** | create a manual transaction |
+| `create_manual_account` | **write** | create a manual (non-bank-linked) account |
 
 ## Security
 
