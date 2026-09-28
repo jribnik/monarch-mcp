@@ -102,6 +102,14 @@ browser login on that throwaway account), then normal
 exactly like the real site, just pointed at `monarch-sandbox` instead of
 `monarch`.
 
+**As of 2026-09-28, this account is planned for deletion around 2026-10-01**
+(it costs money to keep; every write op's coverage gap was closed first,
+specifically to get full use out of it before that). If it's gone by the
+time you read this and a NEW write op needs vendoring, you'll need to
+re-register and re-login a fresh disposable account in api-recon's adapter
+registry first -- the workflow below is unaffected, just needs a live
+account to point at.
+
 This sidesteps the drift-watch merge-window hazard entirely: since nothing
 runs a scheduled `recon catalog monarch-sandbox` diff, there's no
 `OPERATION_REMOVED`/`not_in_latest_run` false-positive risk from merging a
