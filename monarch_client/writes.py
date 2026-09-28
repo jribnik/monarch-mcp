@@ -6,15 +6,16 @@ named mutations below are callable, so a prompt-injection or a model
 mistake can't reach an arbitrary mutation. Each function's signature
 mirrors its server.py counterpart exactly, same as reads.py.
 
-11 write tools -- create_tag, delete_tag, preview_transaction_rule,
+12 write tools -- create_tag, delete_tag, preview_transaction_rule,
 create_transaction_rule, delete_transaction_rule, recategorize_transaction,
 update_transaction, set_transaction_tags, mark_stream_as_not_recurring,
-create_transaction, create_manual_account -- each captured and/or verified
-against a dedicated, disposable monarch-sandbox account (see
-operations/__init__.py's PROVENANCE for each op's exact provenance; two --
-delete_transaction_rule and mark_stream_as_not_recurring -- were verified by
-direct functional call rather than a UI-driven HAR capture, each documented
-as an explicit exception in its own .graphql file). See operations/README.md.
+create_transaction, delete_transaction, create_manual_account -- each
+captured and/or verified against a dedicated, disposable monarch-sandbox
+account (see operations/__init__.py's PROVENANCE for each op's exact
+provenance; three -- delete_transaction_rule, mark_stream_as_not_recurring,
+and delete_transaction -- were verified by direct functional call rather
+than a UI-driven HAR capture, each documented as an explicit exception in
+its own .graphql file). See operations/README.md.
 
 delete_tag was added 2026-09-28, closing a gap left open since the
 original 8-tool build (create_tag shipped with no delete counterpart) --
@@ -40,10 +41,22 @@ or returns a real errors.message rather than silently succeeding, verified
 live) -- unlike setMerchantAction. But an Opus review the same day caught
 that Monarch's existence check doesn't catch a valid-but-wrong-KIND id: a
 real, bank-linked accountId passed to create_transaction wouldn't be
-rejected, and there's no delete_transaction tool to undo the phantom entry
-that would create -- see _verify_account_is_manual, added as this
-function's own client-side gate. create_manual_account's type/subtype pair
-genuinely doesn't need one (verified live: an invalid pair raises).
+rejected, and would create a phantom entry on a real bank feed that has no
+business being manually entered there regardless of whether it could later
+be deleted -- see _verify_account_is_manual, added as this function's own
+client-side gate. create_manual_account's type/subtype pair genuinely
+doesn't need one (verified live: an invalid pair raises).
+
+delete_transaction was added the same day (2026-09-28), closing
+create_transaction's own missing counterpart -- unlike the accountId gate
+above, this was a pure capability gap (no way to undo ANY mistaken
+transaction, not just ones on the wrong account kind), also flagged by the
+same Opus review. NOT captured via api-recon (never driven through its UI
+automation) -- recovered from the old abandoned monarchmoney-enhanced
+library's own hand-authored, long-production-tested query, same recovery
+pattern as delete_transaction_rule. Verified live against monarch-sandbox:
+created a real transaction, deleted it, confirmed via a follow-up read
+that it's actually gone.
 """
 
 from __future__ import annotations
@@ -120,14 +133,16 @@ async def _verify_account_is_manual(account_id: str) -> None:
     manual (non-Plaid) accounts only, but nothing was stopping it being
     called against a real, bank-linked account -- Monarch's own mutation
     only rejects a NONEXISTENT accountId (verified live: "Account matching
-    query does not exist."), it doesn't reject a valid-but-linked one. A
-    manual transaction forced onto a linked account would be a phantom
-    entry on a real bank feed, and there's no delete_transaction tool in
-    this client to undo it (create_tag/delete_tag exists; this doesn't).
-    Gate here instead: a manual account's `credential` field is null; a
-    linked one always has a real credential object (dataProvider,
-    institution, etc.) -- see Web_GetAccountsPage.graphql's
-    AccountListItemFields fragment."""
+    query does not exist."), it doesn't reject a valid-but-linked one. This
+    gate stays even now that delete_transaction exists (below): a manual
+    transaction forced onto a linked account is still a phantom entry that
+    doesn't belong on a real bank feed, whether or not it could later be
+    cleaned up -- a linked account's transactions are supposed to come from
+    the bank sync, not manual entry, and quietly injecting one risks
+    confusing that account's balance/reconciliation regardless. Gate here
+    instead: a manual account's `credential` field is null; a linked one
+    always has a real credential object (dataProvider, institution, etc.)
+    -- see Web_GetAccountsPage.graphql's AccountListItemFields fragment."""
     accounts = await reads.list_accounts()
     match = next(
         (a for a in accounts.get("accounts") or [] if a.get("id") == account_id),
@@ -142,12 +157,10 @@ async def _verify_account_is_manual(account_id: str) -> None:
         raise ValueError(
             f"account_id={account_id!r} ({match.get('displayName')!r}) is a "
             "bank-linked account (it has a credential), not a manual one. "
-            "create_transaction is for MANUAL accounts only -- forcing a "
-            "manual transaction onto a linked account creates a phantom "
-            "entry on a real bank feed with no way to remove it through "
-            "this server (there is no delete_transaction tool). Use "
-            "create_manual_account first if you need a new account to "
-            "record this against."
+            "create_transaction is for MANUAL accounts only -- a linked "
+            "account's transactions are supposed to come from the bank "
+            "sync, not manual entry. Use create_manual_account first if "
+            "you need a new account to record this against."
         )
 
 
@@ -280,12 +293,12 @@ async def create_transaction(
     transaction=null on a nonexistent id, verified live -- see
     Common_CreateTransactionMutation's PROVENANCE note -- but does not
     reject a valid, bank-linked accountId, so _verify_account_is_manual
-    runs first (see its own docstring: no delete_transaction tool exists
-    to undo a mistake here). merchant_name itself is NOT validated by
-    either Monarch or this client -- an arbitrary string creates a new
-    merchant if it doesn't match an existing one exactly, same as the real
-    web app's manual-entry form; that's expected here, unlike
-    set_merchant_name on the rule tools."""
+    runs first (see its own docstring for why this gate stays even though
+    delete_transaction below exists). merchant_name itself is NOT
+    validated by either Monarch or this client -- an arbitrary string
+    creates a new merchant if it doesn't match an existing one exactly,
+    same as the real web app's manual-entry form; that's expected here,
+    unlike set_merchant_name on the rule tools."""
     await _verify_account_is_manual(account_id)
     data = await _call(
         "Common_CreateTransactionMutation",
@@ -302,6 +315,23 @@ async def create_transaction(
         },
     )
     return project.create_transaction_result(data)
+
+
+async def delete_transaction(transaction_id: str) -> dict[str, Any]:
+    """Added 2026-09-28, closing create_transaction's missing counterpart --
+    flagged as a real irreversibility gap by an Opus review (a mistaken
+    manual transaction had no way to be undone through this server).
+    Recovered from the old abandoned library (see
+    Common_DeleteTransactionMutation's PROVENANCE note), verified live
+    against monarch-sandbox: created a real transaction, deleted it,
+    confirmed via a follow-up get_transaction_details call that it's
+    actually gone. Works on any transaction this account can see, not just
+    manually-created ones -- same as the real web app's delete button --
+    so use with the same care as any other destructive write."""
+    data = await _call(
+        "Common_DeleteTransactionMutation", {"input": {"transactionId": transaction_id}}
+    )
+    return project.delete_transaction_result(data)
 
 
 async def create_manual_account(

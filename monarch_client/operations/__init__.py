@@ -438,6 +438,32 @@ PROVENANCE: dict[str, dict] = {
             "validation gate was added here either."
         ),
     },
+    "Common_DeleteTransactionMutation": {
+        "catalog_query_hash": None,  # not catalog-exported -- see the .graphql file's own header
+        "vendored_sha256": "1b83545ff697c1ed9fa4491ad2420d16fbe2079cf6a0f973976401afc87d5d7c",
+        "exported_at": "2026-09-28T00:00:00+00:00",  # approximate -- hand-verified, not export-ops-timestamped
+        "runs_seen": [],
+        "hand_repaired": False,
+        "note": (
+            "backs delete_transaction -- added 2026-09-28, closing "
+            "create_transaction's missing counterpart (added the same day; "
+            "flagged as a real irreversibility gap by an Opus review since "
+            "there was no way to undo a mistaken manual transaction through "
+            "this server). NOT captured via `recon export-ops` -- never "
+            "driven through api-recon's UI automation at all. Recovered "
+            "from keithah/monarchmoney-enhanced's pinned audited commit "
+            "159d36e (delete_transaction method) -- the same abandoned "
+            "library this repo previously wrapped, same recovery pattern "
+            "as Common_DeleteTransactionRule below. Verified live against "
+            "monarch-sandbox before vendoring: created a real manual "
+            "transaction, deleted it with this mutation (got back "
+            "{deleted: true, errors: null}), then confirmed via a "
+            "follow-up get_transaction_details call that getTransaction "
+            "now returns null for that id. Unlike "
+            "Common_DeleteTransactionRule, `deleted` correctly reads true "
+            "on success here -- no unreliable-flag quirk to work around."
+        ),
+    },
 }
 
 _cache: dict[str, str] = {}

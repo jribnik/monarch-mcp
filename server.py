@@ -339,12 +339,12 @@ async def create_transaction(
     spending. date is 'YYYY-MM-DD'. amount is signed like every other tool here:
     negative = expense, positive = income/credit. Use get_categories for category_id
     and list_accounts for account_id -- account_id MUST be a manual account (this is
-    enforced: a bank-linked account_id is rejected before the mutation ever fires,
-    since there's no delete_transaction tool to undo a phantom entry on a real bank
-    feed). A nonexistent account_id/category_id also returns a real error, doesn't
-    fail silently. merchant_name is NOT validated against existing merchants (unlike
-    create_transaction_rule's set_merchant_name) -- a new string creates a new
-    merchant, same as the real app's manual-entry form.
+    enforced: a bank-linked account_id is rejected before the mutation ever fires, since
+    a linked account's transactions are supposed to come from the bank sync, not manual
+    entry). A nonexistent account_id/category_id also returns a real error, doesn't fail
+    silently. merchant_name is NOT validated against existing merchants (unlike
+    create_transaction_rule's set_merchant_name) -- a new string creates a new merchant,
+    same as the real app's manual-entry form. Made a mistake? Use delete_transaction.
     """
     return await client_writes.create_transaction(
         account_id=account_id,
@@ -353,6 +353,17 @@ async def create_transaction(
         merchant_name=merchant_name,
         category_id=category_id,
     )
+
+
+@mcp.tool()
+async def delete_transaction(transaction_id: str) -> dict[str, Any]:
+    """
+    Delete a transaction by id. Works on any transaction this account can see
+    (manual or bank-synced), same as the real app's delete button -- not limited to
+    ones created via create_transaction. There is no undo; use get_transaction_details
+    first if you're not certain you have the right id.
+    """
+    return await client_writes.delete_transaction(transaction_id)
 
 
 @mcp.tool()

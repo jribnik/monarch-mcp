@@ -354,8 +354,8 @@ async def test_create_transaction_rejects_unknown_account_id(fake_client):
 @pytest.mark.asyncio
 async def test_create_transaction_rejects_bank_linked_account(fake_client):
     """Opus review 2026-09-28: Monarch's own mutation only rejects a
-    NONEXISTENT accountId, not a valid-but-linked one -- and there's no
-    delete_transaction tool to undo a phantom entry on a real bank feed.
+    NONEXISTENT accountId, not a valid-but-linked one -- a linked account's
+    transactions are supposed to come from the bank sync, not manual entry.
     A manual account's `credential` is null; a linked one has a real
     credential object."""
     fake_client.responses["Web_GetAccountsPage"] = _accounts_page_response(
@@ -373,6 +373,27 @@ async def test_create_transaction_rejects_bank_linked_account(fake_client):
             merchant_name="x", category_id="cat1",
         )
     assert fake_client.calls == [("Web_GetAccountsPage", {"filters": {}})]
+
+
+@pytest.mark.asyncio
+async def test_delete_transaction_sends_wrapped_id(fake_client):
+    fake_client.responses["Common_DeleteTransactionMutation"] = {
+        "deleteTransaction": {"deleted": True, "errors": None}
+    }
+    result = await writes.delete_transaction("t1")
+    assert fake_client.calls == [
+        ("Common_DeleteTransactionMutation", {"input": {"transactionId": "t1"}})
+    ]
+    assert result == {"deleted_flag": True}
+
+
+@pytest.mark.asyncio
+async def test_delete_transaction_defaults_missing_deleted_to_false(fake_client):
+    fake_client.responses["Common_DeleteTransactionMutation"] = {
+        "deleteTransaction": {"errors": None}
+    }
+    result = await writes.delete_transaction("t1")
+    assert result == {"deleted_flag": False}
 
 
 @pytest.mark.asyncio

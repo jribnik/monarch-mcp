@@ -1,0 +1,44 @@
+# source: NOT api-recon catalog-exported -- see note below.
+# NOT authoritative -- see operations/README.md.
+#
+# EXCEPTION TO THE NORMAL VENDORING PROCESS: this file was NOT captured via
+# `recon export-ops` from a catalog entry -- it was never driven through
+# api-recon's UI automation at all. Recovered from
+# keithah/monarchmoney-enhanced's pinned audited commit 159d36e
+# (monarchmoney.py's delete_transaction method, https://github.com/
+# keithah/monarchmoney-enhanced/blob/159d36e/monarchmoney/monarchmoney.py#L3145),
+# the same abandoned library this repo previously wrapped -- see this
+# client's own module docstring for that history. Added 2026-09-28, closing
+# create_transaction's missing counterpart (added the same day, flagged as
+# a real irreversibility gap by an Opus review: no way to undo a mistaken
+# manual transaction through this server).
+#
+# Verified live against monarch-sandbox before vendoring: created a real
+# manual transaction, called this mutation with its id, got back
+# {deleted: true, errors: null}, then confirmed via a follow-up
+# get_transaction_details call that getTransaction now returns null for
+# that id (it returned the real transaction before the delete). Unlike
+# Common_DeleteTransactionRule, `deleted` correctly reads true on success
+# here -- no unreliable-flag quirk to work around.
+
+mutation Common_DeleteTransactionMutation($input: DeleteTransactionMutationInput!) {
+  deleteTransaction(input: $input) {
+    deleted
+    errors {
+      ...PayloadErrorFields
+      __typename
+    }
+    __typename
+  }
+}
+
+fragment PayloadErrorFields on PayloadError {
+  fieldErrors {
+    field
+    messages
+    __typename
+  }
+  message
+  code
+  __typename
+}

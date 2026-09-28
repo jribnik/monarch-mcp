@@ -91,14 +91,15 @@ multi-kilobyte query changes by one field.
 
 ## Mutations
 
-All 11 write tools are vendored (full coverage): 9 real mutations
+All 12 write tools are vendored (full coverage): 10 real mutations
 (`Common_CreateTransactionTag`, `Common_DeleteHouseholdTransactionTag`,
 `Common_CreateTransactionRuleMutationV2`, `Common_DeleteTransactionRule`,
 `Web_TransactionDrawerUpdateTransaction` (backs 2 tools),
 `Web_SetTransactionTags`, `Common_MarkAsNotRecurring`,
-`Common_CreateTransactionMutation`, `Web_CreateManualAccount`), plus
-`Common_PreviewTransactionRule` -- a QUERY, not a mutation, grouped here
-because its whole purpose is dry-running one (see its own PROVENANCE note).
+`Common_CreateTransactionMutation`, `Common_DeleteTransactionMutation`,
+`Web_CreateManualAccount`), plus `Common_PreviewTransactionRule` -- a
+QUERY, not a mutation, grouped here because its whole purpose is
+dry-running one (see its own PROVENANCE note).
 Every mutation was captured and/or verified against `monarch-sandbox` -- a
 dedicated, disposable Monarch
 account registered in api-recon's adapter registry
@@ -126,12 +127,16 @@ for the real `monarch` site's nightly drift-watch. `recon catalog
 monarch-sandbox --all-runs --merge-runs 0` was used freely to keep its
 catalog cumulative.
 
-Two ops (`Common_DeleteTransactionRule`, `Common_MarkAsNotRecurring`) are
-each an explicit, documented exception to normal export: their UI flows
-proved too fragile/slow to drive reliably via Playwright (a nested
-delete-confirmation dialog; Monarch's recurring detection being an
-async backend batch job rather than something a fresh transaction triggers
-immediately), so each was instead verified by a direct, functional live
+Three ops (`Common_DeleteTransactionRule`, `Common_MarkAsNotRecurring`,
+`Common_DeleteTransactionMutation`) are each an explicit, documented
+exception to normal export: never driven through api-recon's UI
+automation at all -- the first two because their UI flows proved too
+fragile/slow to drive reliably via Playwright (a nested
+delete-confirmation dialog; Monarch's recurring detection being an async
+backend batch job rather than something a fresh transaction triggers
+immediately), the third (added 2026-09-28) simply because it was recovered
+directly from the old abandoned monarchmoney-enhanced library rather than
+captured fresh. Each was instead verified by a direct, functional live
 call against monarch-sandbox with the library's own hand-authored query
 text -- confirmed to succeed and confirmed to actually change server state
 via a follow-up read. See each op's own `.graphql` file header for the

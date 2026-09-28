@@ -269,6 +269,18 @@ def create_transaction_result(data: dict[str, Any], *, include_raw: bool = False
     return _with_raw({"createTransaction": data.get("createTransaction")}, data, include_raw)
 
 
+def delete_transaction_result(
+    data: dict[str, Any], *, include_raw: bool = False
+) -> dict[str, Any]:
+    """Matches server.py's own wrapping (`{"deleted_flag": ok}`), same
+    convention as delete_transaction_rule_result. Unlike that op, `deleted`
+    reads true correctly on success here -- verified live against
+    monarch-sandbox 2026-09-28 (a follow-up get_transaction_details call
+    confirmed getTransaction now returns null for the deleted id)."""
+    deleted = (data.get("deleteTransaction") or {}).get("deleted", False)
+    return _with_raw({"deleted_flag": deleted}, data, include_raw)
+
+
 def create_manual_account_result(
     data: dict[str, Any], *, include_raw: bool = False
 ) -> dict[str, Any]:
