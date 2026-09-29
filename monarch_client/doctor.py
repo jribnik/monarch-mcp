@@ -34,7 +34,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from . import MonarchClient, auth, operations
+from . import MonarchClient, auth, operations, writes
 from .errors import MonarchError
 
 def _api_recon_catalog_path() -> Path:
@@ -45,6 +45,16 @@ def _api_recon_catalog_path() -> Path:
     return (
         Path.home() / "src" / "api-recon" / "artifacts" / auth.site() / "catalog" / "current.json"
     )
+
+
+def _print_write_gate() -> None:
+    if writes.writes_status():
+        print(f"[info] write gate: OPEN ({writes.WRITES_ENV}=1) -- write tools will execute")
+    else:
+        print(
+            f"[info] write gate: CLOSED -- write tools refuse until "
+            f"{writes.WRITES_ENV}=1 is set (reads and dry-run previews unaffected)"
+        )
 
 
 def _check_auth() -> Optional[auth.AuthMaterial]:
@@ -133,24 +143,13 @@ def _check_catalog_drift() -> None:
             )
 
 
-def _is_mutation(op_name: str) -> bool:
-    """True if `op_name`'s vendored .graphql text is a GraphQL `mutation`.
-    Read from the query text itself rather than trusting PROVENANCE flags,
-    because the hand-recovered mutations carry no walk_reachable key."""
-    try:
-        text = operations.load(op_name)
-    except operations.VendoredOperationError:
-        return False
-    return re.match(r"\s*mutation\b", text) is not None
-
-
 def _is_unsafe_op(op_name: str) -> bool:
     """True for ops `--op` must not send: any vendored mutation (checked
     from the query text), plus anything PROVENANCE marks walk_reachable=False
     (a few queries the read-only walk never visits). `--op` sends no
     variables and passes through none of writes.py's safety gates, so a
     mutation here would run unguarded."""
-    if _is_mutation(op_name):
+    if operations.is_mutation(op_name):
         return True
     entry = operations.PROVENANCE.get(op_name)
     return bool(entry) and not entry.get("walk_reachable", True)
@@ -193,6 +192,7 @@ def main() -> None:
         asyncio.run(_run_op(args.op))
         return
 
+    _print_write_gate()
     material = _check_auth()
     ok = material is not None
     if material is not None:

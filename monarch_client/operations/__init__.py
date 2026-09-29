@@ -43,6 +43,7 @@ PROVENANCE records, per operation, what was true at vendoring time:
 from __future__ import annotations
 
 import hashlib
+import re
 from importlib import resources
 
 from ..errors import VendoredOperationError
@@ -521,3 +522,17 @@ def verify_integrity(op_name: str) -> None:
             f"sha256 {expected[:12]}…, got {actual[:12]}…) -- re-run "
             "the vendoring checklist in operations/README.md"
         )
+
+
+def is_mutation(op_name: str) -> bool:
+    """True if `op_name`'s vendored .graphql text is a GraphQL `mutation`.
+    Read from the query text itself rather than trusting PROVENANCE flags,
+    because the hand-recovered mutations carry no walk_reachable key. An op
+    with no vendored file is reported False (load() would raise for it
+    anyway, and callers that must not send unknown ops check that
+    separately)."""
+    try:
+        text = load(op_name)
+    except VendoredOperationError:
+        return False
+    return re.match(r"\s*mutation\b", text) is not None

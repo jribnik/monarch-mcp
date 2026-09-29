@@ -32,6 +32,7 @@ from . import operations, transport
 from .errors import (
     MonarchAuthError,
     MonarchBlockedError,
+    MonarchWriteBlocked,
     MonarchError,
     MonarchGraphQLError,
     MonarchRateLimited,
@@ -44,6 +45,7 @@ __all__ = [
     "MonarchError",
     "MonarchAuthError",
     "MonarchBlockedError",
+    "MonarchWriteBlocked",
     "MonarchRateLimited",
     "MonarchTransportError",
     "MonarchGraphQLError",

@@ -62,15 +62,54 @@ that it's actually gone.
 
 from __future__ import annotations
 
+import os
 from typing import Any, Optional
 
-from . import MonarchClient, project
+from . import MonarchClient, operations, project
 from . import reads
+from .errors import MonarchWriteBlocked
 
 _client = MonarchClient()
 
+# The master write switch. Unset (or anything but "1") means every write
+# tool below refuses BEFORE sending anything -- read tools and the dry-run
+# preview_transaction_rule are unaffected. Added 2026-09-29 (Opus review
+# M13): unlike sleeper_client (dry_run + sandbox-league allowlist) and
+# skylight_client (hard gates), monarch_client had no gate at all, and
+# delete_transaction/delete_tag/delete_transaction_rule act on the real,
+# bank-synced account.
+WRITES_ENV = "MONARCH_CLIENT_ENABLE_WRITES"
+
+
+def writes_status() -> bool:
+    """Public read-only view of the gate (for doctor and diagnostics):
+    True iff MONARCH_CLIENT_ENABLE_WRITES=1."""
+    return _writes_enabled()
+
+
+def _writes_enabled() -> bool:
+    return os.environ.get(WRITES_ENV) == "1"
+
+
+def _require_writes(tool: str) -> None:
+    if not _writes_enabled():
+        raise MonarchWriteBlocked(
+            f"{tool}: writes are disabled -- set {WRITES_ENV}=1 in the "
+            "monarch MCP server's environment to enable",
+            gate="enabled",
+        )
+
 
 async def _call(op_name: str, variables: dict[str, Any]) -> dict[str, Any]:
+    # Defense in depth behind each tool's own _require_writes(): no
+    # mutation-kind vendored op can be sent while the gate is closed, even
+    # via a future write function that forgets the explicit check.
+    if operations.is_mutation(op_name) and not _writes_enabled():
+        raise MonarchWriteBlocked(
+            f"{op_name}: writes are disabled -- set {WRITES_ENV}=1 in the "
+            "monarch MCP server's environment to enable",
+            gate="enabled",
+        )
     return await _client.call(op_name, variables)
 
 
@@ -205,6 +244,7 @@ def _rule_input_common(
 
 
 async def create_tag(name: str, color: str) -> dict[str, Any]:
+    _require_writes("create_tag")
     data = await _call(
         "Common_CreateTransactionTag", {"input": {"name": name, "color": color}}
     )
@@ -217,6 +257,7 @@ async def delete_tag(tag_id: str) -> dict[str, Any]:
     created a real tag, deleted it via this mutation, confirmed via a
     follow-up get_tags call the account was back to exactly its original
     5 default tags."""
+    _require_writes("delete_tag")
     data = await _call("Common_DeleteHouseholdTransactionTag", {"tagId": tag_id})
     return project.delete_tag_result(data)
 
@@ -258,6 +299,7 @@ async def create_transaction_rule(
     set_merchant_name: Optional[str] = None,
     apply_to_existing_transactions: bool = False,
 ) -> dict[str, Any]:
+    _require_writes("create_transaction_rule")
     if set_merchant_name is not None:
         await _verify_merchant_name_exists(set_merchant_name)
     rule_input = _rule_input_common(
@@ -275,6 +317,7 @@ async def create_transaction_rule(
 
 
 async def delete_transaction_rule(rule_id: str) -> dict[str, Any]:
+    _require_writes("delete_transaction_rule")
     data = await _call("Common_DeleteTransactionRule", {"id": rule_id})
     return project.delete_transaction_rule_result(data)
 
@@ -300,6 +343,7 @@ async def create_transaction(
     creates a new merchant if it doesn't match an existing one exactly,
     same as the real web app's manual-entry form; that's expected here,
     unlike set_merchant_name on the rule tools."""
+    _require_writes("create_transaction")
     await _verify_account_is_manual(account_id)
     data = await _call(
         "Common_CreateTransactionMutation",
@@ -329,6 +373,7 @@ async def delete_transaction(transaction_id: str) -> dict[str, Any]:
     actually gone. Works on any transaction this account can see, not just
     manually-created ones -- same as the real web app's delete button --
     so use with the same care as any other destructive write."""
+    _require_writes("delete_transaction")
     data = await _call(
         "Common_DeleteTransactionMutation", {"input": {"transactionId": transaction_id}}
     )
@@ -347,6 +392,7 @@ async def create_manual_account(
     get_account_type_options -- verified live that Monarch rejects an
     invalid pair server-side (raises), so no extra client-side gate is
     needed here either -- see Web_CreateManualAccount's PROVENANCE note."""
+    _require_writes("create_manual_account")
     data = await _call(
         "Web_CreateManualAccount",
         {
@@ -404,6 +450,7 @@ async def _update_transaction(
 
 
 async def recategorize_transaction(transaction_id: str, category_id: str) -> dict[str, Any]:
+    _require_writes("recategorize_transaction")
     return await _update_transaction(transaction_id, category_id=category_id)
 
 
@@ -417,6 +464,7 @@ async def update_transaction(
     needs_review: Optional[bool] = None,
     notes: Optional[str] = None,
 ) -> dict[str, Any]:
+    _require_writes("update_transaction")
     return await _update_transaction(
         transaction_id,
         category_id=category_id,
@@ -430,6 +478,7 @@ async def update_transaction(
 
 
 async def set_transaction_tags(transaction_id: str, tag_ids: list[str]) -> dict[str, Any]:
+    _require_writes("set_transaction_tags")
     data = await _call(
         "Web_SetTransactionTags",
         {
@@ -441,5 +490,6 @@ async def set_transaction_tags(transaction_id: str, tag_ids: list[str]) -> dict[
 
 
 async def mark_stream_as_not_recurring(stream_id: str) -> dict[str, Any]:
+    _require_writes("mark_stream_as_not_recurring")
     data = await _call("Common_MarkAsNotRecurring", {"streamId": stream_id})
     return project.mark_stream_as_not_recurring_result(data)

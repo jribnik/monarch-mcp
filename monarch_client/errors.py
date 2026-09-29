@@ -108,3 +108,18 @@ class MonarchGraphQLError(MonarchError):
                 detail += f", catalog {query_hash[:12]}…"
             detail += ")"
         super().__init__(detail)
+
+
+class MonarchWriteBlocked(MonarchError):
+    """A write (writes.py) was refused by monarch_client's own safety gate
+    BEFORE anything was sent to Monarch. `gate` names which check refused;
+    today only "enabled" exists (MONARCH_CLIENT_ENABLE_WRITES isn't set to
+    "1"). Same spirit as sleeper_client's SleeperWriteBlocked and
+    skylight_client's SkylightWriteBlocked (whose `gate` attribute this
+    mirrors), but Monarch has no sandbox-league/allowlist analogue: the
+    blast radius of a write here is the whole real account, so the one
+    master switch is deliberately the only gate."""
+
+    def __init__(self, message: str, gate: str = "enabled"):
+        super().__init__(message)
+        self.gate = gate

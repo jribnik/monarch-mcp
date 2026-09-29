@@ -93,6 +93,13 @@ so this can't happen by accident against the real account).
 claude mcp add monarch -- ~/src/monarch-mcp/.venv/bin/python ~/src/monarch-mcp/server.py
 ```
 
+Writes are **off by default**. To let the server change your account, set
+`MONARCH_CLIENT_ENABLE_WRITES=1` in the MCP server's environment, e.g.:
+
+```bash
+claude mcp add monarch -e MONARCH_CLIENT_ENABLE_WRITES=1 -- ~/src/monarch-mcp/.venv/bin/python ~/src/monarch-mcp/server.py
+```
+
 Then restart Claude Code so it connects. Ask things like:
 *"Show me uncategorized transactions from June"* → *"Recategorize these three as Groceries."*
 
@@ -125,6 +132,17 @@ Then restart Claude Code so it connects. Ask things like:
 
 ## Security
 
+- **Writes are gated.** With `MONARCH_CLIENT_ENABLE_WRITES` unset (or anything
+  other than `1`), all 11 write tools -- including the three deletes
+  (`delete_transaction`, `delete_tag`, `delete_transaction_rule`) -- raise
+  `MonarchWriteBlocked` before sending anything. Reads and the dry-run
+  `preview_transaction_rule` are unaffected. A second check inside
+  `writes._call` refuses any vendored mutation while the gate is closed, so
+  a future write that forgets the per-tool check still can't fire. This is a
+  single master switch, not an allowlist: unlike Sleeper/Skylight there is no
+  sandbox league or single blessed list -- a write here touches the real,
+  bank-synced account. `python -m monarch_client.doctor` prints whether the
+  gate is open.
 - **No password ever seen or stored.** Auth comes entirely from an
   api-recon-exported session (a plain cookie file); this server never has a
   password-login path of its own.
