@@ -1,5 +1,7 @@
 """
-The 10 read-side MCP tools, reimplemented on monarch_client instead of
+The 10 read-side MCP tools defined in this module (11 at the tool level: the
+README table also counts preview_transaction_rule, a dry-run that lives in
+writes.py), reimplemented on monarch_client instead of
 monarchmoney-enhanced.
 
 Each function's signature mirrors its server.py counterpart exactly (same
@@ -7,7 +9,7 @@ parameter names/defaults) so server.py's `backend.dispatch()` can call
 either implementation interchangeably (see M3). Variable-building follows
 the vendored library's own conventions where they're a known-working match
 for the real app's query (filters.categories/.accounts/.tags, hasNotes/
-isSplit -- cross-checked in _audit/monarchmoney/monarchmoney.py's
+isSplit -- cross-checked in keithah/monarchmoney-enhanced@159d36e monarchmoney/monarchmoney.py's
 get_transactions against the app's actual captured `Web_GetTransactionsList`
 variable declaration: both take the same `$filters: TransactionFilterInput`).
 Where the real app's default differs from the library's (dates, budget
@@ -68,7 +70,7 @@ async def get_budgets(
 ) -> dict[str, Any]:
     """startDate/endDate are required (Date!) by the API even though this
     tool's own params are optional -- default window matches
-    _audit/monarchmoney/services/budget_service.py:59-67 (1st of the
+    keithah/monarchmoney-enhanced@159d36e monarchmoney/services/budget_service.py:59-67 (1st of the
     previous calendar month through 1st of the next), so Claude sees the
     same default window it always has."""
     today = date.today()

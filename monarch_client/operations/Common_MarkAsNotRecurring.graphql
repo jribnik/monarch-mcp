@@ -14,7 +14,7 @@
 # id, confirmed `success: true` with no errors, and confirmed via a
 # follow-up Common_GetAggregatedRecurringItems call that the stream no
 # longer appeared at all -- 2026-09-24. Query text copied verbatim from
-# _audit/monarchmoney/services/transaction_service.py's own
+# keithah/monarchmoney-enhanced@159d36e monarchmoney/services/transaction_service.py's own
 # hand-authored, long-production-tested version.
 
 mutation Common_MarkAsNotRecurring($streamId: ID!) {

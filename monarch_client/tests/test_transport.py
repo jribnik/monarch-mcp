@@ -148,3 +148,42 @@ async def test_non_json_response_raises_transport_error(monkeypatch):
 
     with pytest.raises(MonarchTransportError):
         await transport.execute("Common_GetMe", "query {}", {})
+
+
+@pytest.mark.asyncio
+async def test_graphql_error_carries_vendored_provenance(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"errors": [{"message": "boom"}], "data": None})
+
+    _install_mock(monkeypatch, handler)
+
+    with pytest.raises(MonarchGraphQLError) as exc_info:
+        await transport.execute(
+            "Common_GetMe",
+            "query {}",
+            {},
+            vendored_path="monarch_client/operations/Common_GetMe.graphql",
+            query_hash="abcdef1234567890",
+        )
+    err = exc_info.value
+    assert err.vendored_path == "monarch_client/operations/Common_GetMe.graphql"
+    assert err.query_hash == "abcdef1234567890"
+    assert "abcdef123456" in str(err)
+
+
+@pytest.mark.asyncio
+async def test_client_call_passes_provenance_to_graphql_error(monkeypatch):
+    from monarch_client import MonarchClient, operations
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"errors": [{"message": "boom"}], "data": None})
+
+    _install_mock(monkeypatch, handler)
+
+    with pytest.raises(MonarchGraphQLError) as exc_info:
+        await MonarchClient().call("Common_GetMe", {})
+    err = exc_info.value
+    assert err.vendored_path == "monarch_client/operations/Common_GetMe.graphql"
+    assert err.query_hash == operations.PROVENANCE["Common_GetMe"].get(
+        "catalog_query_hash"
+    )

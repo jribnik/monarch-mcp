@@ -6,7 +6,8 @@ named mutations below are callable, so a prompt-injection or a model
 mistake can't reach an arbitrary mutation. Each function's signature
 mirrors its server.py counterpart exactly, same as reads.py.
 
-12 write tools -- create_tag, delete_tag, preview_transaction_rule,
+12 functions in this module (11 write tools at the tool level: the README table
+counts preview_transaction_rule, a dry-run, as a read) -- create_tag, delete_tag, preview_transaction_rule,
 create_transaction_rule, delete_transaction_rule, recategorize_transaction,
 update_transaction, set_transaction_tags, mark_stream_as_not_recurring,
 create_transaction, delete_transaction, create_manual_account -- each
@@ -175,7 +176,7 @@ def _rule_input_common(
     set_merchant_name: Optional[str],
 ) -> dict[str, Any]:
     """Shared field-building for preview/create_transaction_rule -- matches
-    _audit/monarchmoney/monarchmoney.py's own rule_input construction
+    keithah/monarchmoney-enhanced@159d36e monarchmoney/monarchmoney.py's own rule_input construction
     (always-sent keys default to None; merchantNameCriteria/
     originalStatementCriteria are added only when given, since the library
     demonstrated live that this is what the API expects).
@@ -377,7 +378,7 @@ async def _update_transaction(
     mutation, same field-name mapping verified live against
     monarch-sandbox (see operations/__init__.py's PROVENANCE note: `name`
     for merchant, not `merchantName`; amount/date only sent when truthy,
-    matching _audit/monarchmoney/monarchmoney.py's own guard against the
+    matching keithah/monarchmoney-enhanced@159d36e monarchmoney/monarchmoney.py's own guard against the
     API rejecting empty values for those two fields)."""
     input_: dict[str, Any] = {"id": transaction_id}
     if category_id is not None:

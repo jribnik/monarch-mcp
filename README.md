@@ -8,7 +8,7 @@ budgets, etc. Built to replace Monarch's own MCP server, which has been offline.
 Built entirely on [`monarch_client`](monarch_client/) — a self-contained client
 against Monarch's real GraphQL API, using plain HTTP + vendored query text
 captured from the real web app by [api-recon](https://github.com/jribnik/api-recon).
-**Full coverage: 10 read tools and 12 write tools**, all captured
+**Full coverage: 22 tools (11 read, including one write-adjacent dry-run, and 11 write)**, all captured
 and/or verified against a dedicated, disposable `monarch-sandbox` account
 before ever touching the real one. See `monarch_client/__init__.py`'s module
 docstring for the package's full shape.
@@ -21,9 +21,9 @@ both backends' shapes on every read, logged to `~/.monarch-mcp/parity.log`).
 Flipped to `monarch_client` exclusively on 2026-09-28 after 3 days of clean
 soak plus a field-by-field review of the parity log turned up nothing
 concerning. The legacy dispatch layer, its `config.py`/`auth.py`/`diag_login.py`,
-and the `monarchmoney-enhanced`/`gql` dependencies were removed in the same
-pass — `_audit/` (a shallow clone of the audited commit) is left on disk,
-gitignored, purely as historical reference.
+the `_audit/` clone (gitignored, so never in this repo's history), and the
+`monarchmoney-enhanced`/`gql` dependencies were removed in the same pass. The
+upstream code those comments cite lives at keithah/monarchmoney-enhanced@159d36e.
 
 ## Setup
 
@@ -140,8 +140,5 @@ Then restart Claude Code so it connects. Ask things like:
 ```
 server.py         FastMCP server (the tools above)
 monarch_client/   the client -- see monarch_client/__init__.py
-_audit/           shallow clone of the formerly-used library, at its audited
-                   commit -- historical reference only, gitignored, not a
-                   runtime dependency
 .venv/            python3.11 environment
 ```

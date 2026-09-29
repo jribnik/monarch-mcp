@@ -2,9 +2,8 @@
 monarch_client: a minimal, self-contained HTTP client for Monarch Money's
 real (unofficial) GraphQL API.
 
-Built to replace `monarchmoney-enhanced` (vendored under monarch-mcp's
-_audit/, abandoned upstream) with something monarch-mcp fully owns. Three
-pieces, kept separate on purpose:
+Built to replace `monarchmoney-enhanced` (abandoned upstream) with something
+monarch-mcp fully owns. Three pieces, kept separate on purpose:
 
   - auth.py: a pure reader of a small JSON file (cookies/headers) that
     api-recon produces via `recon export-session`, run separately by a
@@ -17,8 +16,8 @@ pieces, kept separate on purpose:
   - transport.py: POSTs a named operation with those two ingredients to
     api.monarch.com and turns GraphQL-level errors into typed exceptions.
 
-This package has zero imports from the rest of monarch-mcp (server.py,
-config.py) and no runtime dependency on api-recon -- it can be lifted into
+This package has zero imports from the rest of monarch-mcp (server.py)
+and no runtime dependency on api-recon -- it can be lifted into
 its own repo later with a `git mv` if a second consumer ever shows up.
 
 Run `python -m monarch_client.doctor` to check that auth, the network path,
@@ -65,7 +64,14 @@ class MonarchClient:
     async def call(self, op_name: str, variables: dict[str, Any]) -> dict[str, Any]:
         operations.verify_integrity(op_name)
         query_text = operations.load(op_name)
-        return await transport.execute(op_name, query_text, variables)
+        entry = operations.PROVENANCE.get(op_name) or {}
+        return await transport.execute(
+            op_name,
+            query_text,
+            variables,
+            vendored_path=f"monarch_client/operations/{op_name}.graphql",
+            query_hash=entry.get("catalog_query_hash"),
+        )
 
     async def aclose(self) -> None:
         await transport.aclose()

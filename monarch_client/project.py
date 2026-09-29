@@ -141,7 +141,7 @@ def create_tag_result(data: dict[str, Any], *, include_raw: bool = False) -> dic
     """Pass-through: `createTransactionTag.{tag,errors}` matches the old
     library's shape exactly -- same operation name, same query, same
     variables (`$input: CreateTransactionTagInput!`), verified byte-for-byte
-    against _audit/monarchmoney/monarchmoney.py's create_transaction_tag."""
+    against keithah/monarchmoney-enhanced@159d36e monarchmoney/monarchmoney.py's create_transaction_tag."""
     return _with_raw(
         {"createTransactionTag": data.get("createTransactionTag")}, data, include_raw
     )

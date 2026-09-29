@@ -102,7 +102,12 @@ async def _post(
 
 
 async def execute(
-    op_name: str, query_text: str, variables: dict[str, Any]
+    op_name: str,
+    query_text: str,
+    variables: dict[str, Any],
+    *,
+    vendored_path: Optional[str] = None,
+    query_hash: Optional[str] = None,
 ) -> dict[str, Any]:
     """
     POST one vendored GraphQL operation to Monarch's real API and return its
@@ -116,6 +121,11 @@ async def execute(
     way to refresh itself, so retrying with the same material would just
     reproduce the same failure; see auth.py's module docstring for the
     actual fix (a human re-exports the session file).
+
+    `vendored_path` / `query_hash` are optional provenance (where the query
+    text came from, which catalog hash it was vendored against); they are
+    attached to any MonarchGraphQLError so the field-probe ladder can start
+    without re-running anything.
     """
     material = auth.load()
     resp = await _post(op_name, query_text, variables, material)
@@ -156,6 +166,12 @@ async def execute(
 
     errors = payload.get("errors")
     if errors:
-        raise MonarchGraphQLError(op_name, errors, partial_data=payload.get("data"))
+        raise MonarchGraphQLError(
+            op_name,
+            errors,
+            vendored_path=vendored_path,
+            query_hash=query_hash,
+            partial_data=payload.get("data"),
+        )
 
     return payload.get("data") or {}

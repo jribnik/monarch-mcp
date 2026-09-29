@@ -9,7 +9,7 @@
 # Rather than keep fighting UI selectors for marginal benefit, this
 # operation was instead verified directly and functionally: called live
 # against the disposable monarch-sandbox account with this exact query text
-# (copied verbatim from _audit/monarchmoney/monarchmoney.py's own
+# (copied verbatim from keithah/monarchmoney-enhanced@159d36e monarchmoney/monarchmoney.py's own
 # hand-authored, long-production-tested version), confirmed it returned no
 # errors, and confirmed via a follow-up Web_GetTransactionRules call that
 # the target rule was actually gone -- twice, on two separate test rules,

@@ -10,7 +10,7 @@
 # manually grepping the raw HAR body rather than a simple text search. The
 # real value, 30, was recovered from
 # artifacts/monarch-sandbox/runs/2026-09-24T19-44-40Z/capture.har and matches
-# _audit/monarchmoney/monarchmoney.py's own hand-authored query exactly.
+# keithah/monarchmoney-enhanced@159d36e monarchmoney/monarchmoney.py's own hand-authored query exactly.
 
 query Common_PreviewTransactionRule($rule: TransactionRulePreviewInput!, $offset: Int) {
   transactionRulePreview(input: $rule) {
