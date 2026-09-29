@@ -11,6 +11,12 @@ dependencies = [
     "httpx>=0.28",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio",
+]
+
 # This is a local-only package: not published, no console entry points. The
 # pyproject exists purely for reproducibility -- so pytest can find
 # monarch_client without cwd tricks, and so dependencies/Python version live
@@ -24,3 +30,13 @@ dependencies = [
 # dependency on either and never did.
 [tool.setuptools]
 packages = ["monarch_client", "monarch_client.operations"]
+
+# The vendored .graphql query text and each package's README are read at
+# runtime (operations.load() uses importlib.resources), so a non-editable
+# install must ship them.
+[tool.setuptools.package-data]
+"monarch_client.operations" = ["*.graphql", "README.md"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+testpaths = ["monarch_client/tests"]

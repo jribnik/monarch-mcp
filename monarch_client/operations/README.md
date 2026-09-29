@@ -73,12 +73,17 @@ in automatically.
    vendored file's hash matches what's recorded, and that no file contains
    an un-repaired redaction placeholder.
 
-7. **Run `doctor`** to confirm the catalog-drift check now shows this op as
-   unchanged:
+7. **Confirm the drift check now sees this op as unchanged.** Catalog
+   drift is checked by api-recon's drift-watch, which reads this package's
+   records:
 
    ```bash
-   .venv/bin/python -m monarch_client.doctor
+   .venv/bin/python -m monarch_client.operations --provenance-json | grep -A3 '"<OpName>"'
    ```
+
+   (the `catalog_query_hash` shown must equal the catalog's current hash for
+   that op -- re-run api-recon's drift-watch to confirm). `doctor` itself no
+   longer compares hashes.
 
 ## Why files, not Python string constants
 

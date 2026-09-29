@@ -25,6 +25,9 @@ class _FakeClient:
 @pytest.fixture
 def fake_client(monkeypatch):
     client = _FakeClient({})
+    # These tests exercise each write's request/projection logic, so open
+    # the master write gate; the gate itself is covered in test_write_gate.py.
+    monkeypatch.setenv(writes.WRITES_ENV, "1")
     monkeypatch.setattr(writes, "_client", client)
     # set_merchant_name's safety check (_verify_merchant_name_exists) calls
     # reads.get_transactions, which uses reads.py's own module-level
