@@ -56,19 +56,20 @@ _READ_OPS_EXPORTED_AT = "2026-09-24T15:56:34+00:00"
 PROVENANCE: dict[str, dict] = {
     "Common_GetMe": {
         "catalog_query_hash": (
-            "45b63a9705a457f5a8500e84a13b4e9373a409b5c798b103fbc8f0a51bcf1d50"
+            "d0c96689f8c928bb0dd09b8961872df9cbb90dadf7d2462507306e5428215fb1"
         ),
         "vendored_sha256": (
-            "f7cff7b0ab4e43186599a322fb20c6628ad8412939479d567aa49a5762987efb"
+            "aad692738b8bdb7fc3cc57664d79b3b270de2652cef328cf38fb3ceaba1504e2"
         ),
-        "exported_at": "2026-09-24T15:53:35.162223+00:00",
-        "runs_seen": [
-            "2026-09-23T15-40-10Z",
-            "2026-09-23T16-27-05Z",
-            "2026-09-24T14-30-04Z",
-        ],
+        "exported_at": "2026-09-29T16:30:53.793003+00:00",
+        "runs_seen": ["2026-09-27T14-30-04Z", "2026-09-28T14-30-00Z", "2026-09-29T14-30-00Z"],
         "hand_repaired": False,
-        "note": "no variables, no redacted literals -- used as doctor's auth smoke test",
+        "note": (
+            "no variables, no redacted literals -- used as doctor's auth smoke test. "
+            "Re-vendored 2026-09-29 after the catalog hash drifted (Monarch added "
+            "profile.userReportedAttributionChannels; the vendored query just omits "
+            "one extra field, so it worked unchanged either way)"
+        ),
     },
     "Web_GetAccountsPage": {
         "catalog_query_hash": "dceb5b0ae3a7fb07440b28c414ecf90dabe5649223b1c8e51ea9b04410dbb61a",

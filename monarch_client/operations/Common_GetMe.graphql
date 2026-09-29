@@ -1,8 +1,8 @@
 # source: recon catalog for 'monarch', operation 'Common_GetMe'
-# query_hash: 45b63a9705a457f5a8500e84a13b4e9373a409b5c798b103fbc8f0a51bcf1d50
-# observed in run(s): 2026-09-23T15-40-10Z, 2026-09-23T16-27-05Z, 2026-09-24T14-30-04Z
-# last_seen: 2026-09-24T14:30:45.925000+00:00
-# exported: 2026-09-24T15:53:35.162223+00:00
+# query_hash: d0c96689f8c928bb0dd09b8961872df9cbb90dadf7d2462507306e5428215fb1
+# observed in run(s): 2026-09-27T14-30-04Z, 2026-09-28T14-30-00Z, 2026-09-29T14-30-00Z
+# last_seen: 2026-09-29T14:30:42.397000+00:00
+# exported: 2026-09-29T16:30:53.793003+00:00
 # NOT authoritative -- catalog is built from OBSERVED traffic, not a schema fetch.
 
 query Common_GetMe {
@@ -16,6 +16,7 @@ query Common_GetMe {
       viewedMarkAsReviewedUpdatesCalloutAt
       hasDismissedWhatsNewAt
       collaboratesOnFinancesDetailed
+      userReportedAttributionChannels
       webUiThemePreference
       mobileUiThemePreference
       __typename
