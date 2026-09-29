@@ -264,7 +264,7 @@ PROVENANCE: dict[str, dict] = {
         "note": (
             "backs BOTH recategorize_transaction and update_transaction -- "
             "same underlying mutation, just a different subset of `input` "
-            "fields set (matches _audit/monarchmoney/monarchmoney.py's own "
+            "fields set (matches keithah/monarchmoney-enhanced@159d36e monarchmoney/monarchmoney.py's own "
             "update_transaction, which recategorize_transaction is itself a "
             "thin wrapper around). Field-name mapping confirmed live against "
             "monarch-sandbox: category->'category', merchant_name->'name' "

@@ -21,8 +21,9 @@ both backends' shapes on every read, logged to `~/.monarch-mcp/parity.log`).
 Flipped to `monarch_client` exclusively on 2026-09-28 after 3 days of clean
 soak plus a field-by-field review of the parity log turned up nothing
 concerning. The legacy dispatch layer, its `config.py`/`auth.py`/`diag_login.py`,
-the `_audit/` clone, and the `monarchmoney-enhanced`/`gql` dependencies were
-removed in the same pass (still available in git history).
+the `_audit/` clone (gitignored, so never in this repo's history), and the
+`monarchmoney-enhanced`/`gql` dependencies were removed in the same pass. The
+upstream code those comments cite lives at keithah/monarchmoney-enhanced@159d36e.
 
 ## Setup
 

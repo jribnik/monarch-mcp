@@ -91,7 +91,8 @@ multi-kilobyte query changes by one field.
 
 ## Mutations
 
-All 12 write tools are vendored (full coverage): 10 real mutations
+All 12 writes.py functions are vendored (full coverage; 11 write tools at the
+tool level, since preview_transaction_rule is counted as a read): 10 real mutations
 (`Common_CreateTransactionTag`, `Common_DeleteHouseholdTransactionTag`,
 `Common_CreateTransactionRuleMutationV2`, `Common_DeleteTransactionRule`,
 `Web_TransactionDrawerUpdateTransaction` (backs 2 tools),
