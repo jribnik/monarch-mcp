@@ -132,7 +132,26 @@ def _check_catalog_drift() -> None:
             )
 
 
+def _is_unsafe_op(op_name: str) -> bool:
+    """True for ops `--op` must not send: anything PROVENANCE marks
+    walk_reachable=False (mutations, plus a few queries the read-only walk
+    never visits). `--op` sends no variables and passes through none of
+    writes.py's safety gates, so a mutation here would run unguarded."""
+    entry = operations.PROVENANCE.get(op_name)
+    return bool(entry) and not entry.get("walk_reachable", True)
+
+
 async def _run_op(op_name: str) -> None:
+    if _is_unsafe_op(op_name):
+        print(
+            f"[FAIL] {op_name}: refusing -- this op is marked "
+            "walk_reachable=False in PROVENANCE (a mutation, or a query the "
+            "read-only walk never visits), and --op sends no variables and "
+            "passes through none of writes.py's safety gates. Use the real "
+            "MCP tool to exercise it."
+        )
+        sys.exit(1)
+
     client = MonarchClient()
     try:
         data = await client.call(op_name, {})

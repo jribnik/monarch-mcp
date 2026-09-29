@@ -64,7 +64,14 @@ class MonarchClient:
     async def call(self, op_name: str, variables: dict[str, Any]) -> dict[str, Any]:
         operations.verify_integrity(op_name)
         query_text = operations.load(op_name)
-        return await transport.execute(op_name, query_text, variables)
+        entry = operations.PROVENANCE.get(op_name) or {}
+        return await transport.execute(
+            op_name,
+            query_text,
+            variables,
+            vendored_path=f"monarch_client/operations/{op_name}.graphql",
+            query_hash=entry.get("catalog_query_hash"),
+        )
 
     async def aclose(self) -> None:
         await transport.aclose()
