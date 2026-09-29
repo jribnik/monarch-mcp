@@ -18,7 +18,7 @@ reachable on this machine -- flags any vendored operation whose catalog
 hash has drifted since it was vendored.
 
 With --op NAME: calls that one vendored operation with no variables (most
-of the 10 read ops need real variables -- see reads.py -- so this is a raw
+of the read ops need real variables -- see reads.py -- so this is a raw
 transport-level check, not a substitute for exercising the actual MCP
 tool).
 """
@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -132,11 +133,25 @@ def _check_catalog_drift() -> None:
             )
 
 
+def _is_mutation(op_name: str) -> bool:
+    """True if `op_name`'s vendored .graphql text is a GraphQL `mutation`.
+    Read from the query text itself rather than trusting PROVENANCE flags,
+    because the hand-recovered mutations carry no walk_reachable key."""
+    try:
+        text = operations.load(op_name)
+    except operations.VendoredOperationError:
+        return False
+    return re.match(r"\s*mutation\b", text) is not None
+
+
 def _is_unsafe_op(op_name: str) -> bool:
-    """True for ops `--op` must not send: anything PROVENANCE marks
-    walk_reachable=False (mutations, plus a few queries the read-only walk
-    never visits). `--op` sends no variables and passes through none of
-    writes.py's safety gates, so a mutation here would run unguarded."""
+    """True for ops `--op` must not send: any vendored mutation (checked
+    from the query text), plus anything PROVENANCE marks walk_reachable=False
+    (a few queries the read-only walk never visits). `--op` sends no
+    variables and passes through none of writes.py's safety gates, so a
+    mutation here would run unguarded."""
+    if _is_mutation(op_name):
+        return True
     entry = operations.PROVENANCE.get(op_name)
     return bool(entry) and not entry.get("walk_reachable", True)
 
@@ -144,8 +159,8 @@ def _is_unsafe_op(op_name: str) -> bool:
 async def _run_op(op_name: str) -> None:
     if _is_unsafe_op(op_name):
         print(
-            f"[FAIL] {op_name}: refusing -- this op is marked "
-            "walk_reachable=False in PROVENANCE (a mutation, or a query the "
+            f"[FAIL] {op_name}: refusing -- this op is a mutation, or is "
+            "marked walk_reachable=False in PROVENANCE (a query the "
             "read-only walk never visits), and --op sends no variables and "
             "passes through none of writes.py's safety gates. Use the real "
             "MCP tool to exercise it."
