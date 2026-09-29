@@ -35,7 +35,7 @@ packages = ["monarch_client", "monarch_client.operations"]
 # runtime (operations.load() uses importlib.resources), so a non-editable
 # install must ship them.
 [tool.setuptools.package-data]
-"monarch_client.operations" = ["*.graphql", "*.json", "README.md"]
+"monarch_client.operations" = ["*.graphql", "README.md"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"

@@ -65,51 +65,41 @@ from __future__ import annotations
 import os
 from typing import Any, Optional
 
-from . import MonarchClient, operations, project
+from . import MonarchClient, gate, operations, project
 from . import reads
-from .errors import MonarchWriteBlocked
+from .errors import MonarchWriteBlocked  # noqa: F401  (kept importable from here)
 
 _client = MonarchClient()
 
-# The master write switch. Unset (or anything but "1") means every write
-# tool below refuses BEFORE sending anything -- read tools and the dry-run
-# preview_transaction_rule are unaffected. Added 2026-09-29 (Opus review
-# M13): unlike sleeper_client (dry_run + sandbox-league allowlist) and
-# skylight_client (hard gates), monarch_client had no gate at all, and
-# delete_transaction/delete_tag/delete_transaction_rule act on the real,
-# bank-synced account.
-WRITES_ENV = "MONARCH_CLIENT_ENABLE_WRITES"
+# The master write switch (MONARCH_CLIENT_ENABLE_WRITES) lives in gate.py so
+# MonarchClient.call's transport-level backstop can share it. Unset (or
+# anything but "1") means every write tool below refuses BEFORE sending
+# anything -- read tools and the dry-run preview_transaction_rule are
+# unaffected. Re-exported here under the names doctor and the tests use.
+WRITES_ENV = gate.WRITES_ENV
 
 
 def writes_status() -> bool:
     """Public read-only view of the gate (for doctor and diagnostics):
     True iff MONARCH_CLIENT_ENABLE_WRITES=1."""
-    return _writes_enabled()
+    return gate.writes_enabled()
 
 
 def _writes_enabled() -> bool:
-    return os.environ.get(WRITES_ENV) == "1"
+    return gate.writes_enabled()
 
 
 def _require_writes(tool: str) -> None:
-    if not _writes_enabled():
-        raise MonarchWriteBlocked(
-            f"{tool}: writes are disabled -- set {WRITES_ENV}=1 in the "
-            "monarch MCP server's environment to enable",
-            gate="enabled",
-        )
+    gate.require_writes(tool)
 
 
 async def _call(op_name: str, variables: dict[str, Any]) -> dict[str, Any]:
-    # Defense in depth behind each tool's own _require_writes(): no
-    # mutation-kind vendored op can be sent while the gate is closed, even
-    # via a future write function that forgets the explicit check.
-    if operations.is_mutation(op_name) and not _writes_enabled():
-        raise MonarchWriteBlocked(
-            f"{op_name}: writes are disabled -- set {WRITES_ENV}=1 in the "
-            "monarch MCP server's environment to enable",
-            gate="enabled",
-        )
+    # Second line of defense behind each tool's own _require_writes():
+    # MonarchClient.call also refuses mutation-kind ops while the gate is
+    # closed, but this check stays so the guarantee holds even when a test
+    # or a future caller swaps in a different client object.
+    if operations.is_mutation(op_name):
+        gate.require_writes(op_name)
     return await _client.call(op_name, variables)
 
 

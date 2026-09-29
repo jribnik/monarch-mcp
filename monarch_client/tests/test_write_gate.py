@@ -187,6 +187,91 @@ async def test_call_layer_allows_queries_when_closed(monkeypatch, fake_client):
     assert [op for op, _ in fake_client.calls] == ["Common_GetMe"]
 
 
+class _FakeExecute:
+    """Stands in for transport.execute so MonarchClient.call itself runs
+    (gate check, integrity, load) without any network."""
+
+    def __init__(self):
+        self.calls: list[str] = []
+
+    async def __call__(self, op_name, query_text, variables, **kwargs):
+        self.calls.append(op_name)
+        return {}
+
+
+@pytest.fixture
+def fake_execute(monkeypatch):
+    from monarch_client import transport
+
+    fake = _FakeExecute()
+    monkeypatch.setattr(transport, "execute", fake)
+    return fake
+
+
+@pytest.mark.asyncio
+async def test_direct_client_call_blocks_every_mutation_when_closed(
+    monkeypatch, fake_execute
+):
+    """Opus review of PR #2: the backstop must live in MonarchClient.call, not
+    only writes._call, so a direct client call can't bypass the gate."""
+    from monarch_client import MonarchClient
+
+    monkeypatch.delenv(writes.WRITES_ENV, raising=False)
+    mutations = [n for n in operations.PROVENANCE if operations.is_mutation(n)]
+    assert len(mutations) >= 10, mutations
+    client = MonarchClient()
+    for op in mutations:
+        with pytest.raises(errors.MonarchWriteBlocked) as exc:
+            await client.call(op, {})
+        assert exc.value.gate == "enabled"
+        assert op in str(exc.value)
+    assert fake_execute.calls == [], "a refused mutation must not reach transport"
+
+
+@pytest.mark.asyncio
+async def test_direct_client_call_allows_mutation_when_enabled(
+    monkeypatch, fake_execute
+):
+    from monarch_client import MonarchClient
+
+    monkeypatch.setenv(writes.WRITES_ENV, "1")
+    await MonarchClient().call("Common_DeleteTransactionMutation", {})
+    assert fake_execute.calls == ["Common_DeleteTransactionMutation"]
+
+
+@pytest.mark.asyncio
+async def test_direct_client_call_leaves_queries_unaffected_when_closed(
+    monkeypatch, fake_execute
+):
+    from monarch_client import MonarchClient
+
+    monkeypatch.delenv(writes.WRITES_ENV, raising=False)
+    client = MonarchClient()
+    await client.call("Common_GetMe", {})
+    await client.call("Common_PreviewTransactionRule", {})  # dry-run, a query
+    assert fake_execute.calls == ["Common_GetMe", "Common_PreviewTransactionRule"]
+
+
+def test_is_mutation_sees_a_mutation_after_a_leading_fragment(monkeypatch):
+    """A vendored file may define a fragment BEFORE its mutation; the
+    header-stripped text then doesn't start with the operation keyword."""
+    text = (
+        "fragment F on Thing {\n  id\n}\n\n"
+        "mutation Sneaky($id: ID!) {\n  doIt(id: $id) { ...F }\n}\n"
+    )
+    monkeypatch.setattr(operations, "load", lambda name: text)
+    assert operations.is_mutation("Anything") is True
+
+    query = "fragment F on Thing {\n  id\n}\n\nquery Q {\n  thing { ...F }\n}\n"
+    monkeypatch.setattr(operations, "load", lambda name: query)
+    assert operations.is_mutation("Anything") is False
+
+    # The word appearing inside a comment or mid-line must not count.
+    tricky = "query Q {\n  # mutation in a comment\n  thing { id }\n}\n"
+    monkeypatch.setattr(operations, "load", lambda name: tricky)
+    assert operations.is_mutation("Anything") is False
+
+
 def test_doctor_reports_gate_state(monkeypatch, capsys):
     monkeypatch.delenv(writes.WRITES_ENV, raising=False)
     doctor._print_write_gate()

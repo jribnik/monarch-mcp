@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from . import operations, transport
+from . import gate, operations, transport
 from .errors import (
     MonarchAuthError,
     MonarchBlockedError,
@@ -64,6 +64,14 @@ class MonarchClient:
     """
 
     async def call(self, op_name: str, variables: dict[str, Any]) -> dict[str, Any]:
+        # Transport-level backstop for the write gate (Opus review of PR #2):
+        # ANY mutation-kind vendored op is refused here while the gate is
+        # closed, before integrity checking or any I/O, so a direct
+        # MonarchClient().call(<mutation>) or a future mutation reached from
+        # reads.py can't bypass the per-tool checks in writes.py. Mirrors
+        # skylight_client/transport.py's check.
+        if operations.is_mutation(op_name):
+            gate.require_writes(op_name)
         operations.verify_integrity(op_name)
         query_text = operations.load(op_name)
         entry = operations.PROVENANCE.get(op_name) or {}

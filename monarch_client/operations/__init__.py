@@ -535,4 +535,7 @@ def is_mutation(op_name: str) -> bool:
         text = load(op_name)
     except VendoredOperationError:
         return False
-    return re.match(r"\s*mutation\b", text) is not None
+    # Multiline search, not a leading match: a vendored file may define a
+    # `fragment` before its `mutation`, and the header-stripped text then no
+    # longer STARTS with the operation keyword.
+    return re.search(r"^\s*mutation\b", text, re.MULTILINE) is not None

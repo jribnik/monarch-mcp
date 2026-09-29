@@ -14,7 +14,12 @@ monarch_client. This is the contract between the two repos:
                                          #   -- the checker must skip these
       "walk_reachable": bool}, ...]      # false = the read-only walk can never
                                          #   re-observe it (mutations, etc.);
-                                         #   the checker must skip, not warn
+                                         #   the checker must skip, not warn.
+                                         #   ALWAYS false for a mutation-kind
+                                         #   op (read from its query text via
+                                         #   operations.is_mutation), even the
+                                         #   hand-recovered ones whose
+                                         #   PROVENANCE entry has no flag
 
 Sorted by name so the output is stable. Reads only PROVENANCE -- no
 network, no auth, no files outside this package.
@@ -26,7 +31,7 @@ import argparse
 import json
 import sys
 
-from . import PROVENANCE
+from . import PROVENANCE, is_mutation
 
 
 def provenance_records() -> list[dict]:
@@ -35,7 +40,9 @@ def provenance_records() -> list[dict]:
             "name": name,
             "vendored_path": f"monarch_client/operations/{name}.graphql",
             "catalog_query_hash": entry.get("catalog_query_hash"),
-            "walk_reachable": bool(entry.get("walk_reachable", True)),
+            "walk_reachable": (
+                bool(entry.get("walk_reachable", True)) and not is_mutation(name)
+            ),
         }
         for name, entry in sorted(PROVENANCE.items())
     ]
