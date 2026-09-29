@@ -13,9 +13,11 @@ If the auth check below fails, it prints the exact `recon export-session`
 command to run from api-recon to fix it.
 
 With no arguments: reads (and prints a summary of) the current auth file,
-makes one live smoke call (Common_GetMe), and -- if api-recon's catalog is
-reachable on this machine -- flags any vendored operation whose catalog
-hash has drifted since it was vendored.
+makes one live smoke call (Common_GetMe), and reports whether the write
+gate is open. Catalog drift is NOT checked here (removed 2026-09-29, along
+with this module's hardcoded ~/src/api-recon path): api-recon's drift-watch
+consumes `python -m monarch_client.operations --provenance-json` and does
+the comparison against its own catalog.
 
 With --op NAME: calls that one vendored operation with no variables (most
 of the read ops need real variables -- see reads.py -- so this is a raw
@@ -28,24 +30,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import re
 import sys
 import time
-from pathlib import Path
 from typing import Optional
 
 from . import MonarchClient, auth, operations, writes
 from .errors import MonarchError
-
-def _api_recon_catalog_path() -> Path:
-    """The catalog for whichever site auth.site() currently resolves to --
-    NOT hardcoded to the real 'monarch' site, so running doctor against
-    MONARCH_CLIENT_SITE=monarch-sandbox checks drift against the sandbox's
-    own catalog, not the real account's."""
-    return (
-        Path.home() / "src" / "api-recon" / "artifacts" / auth.site() / "catalog" / "current.json"
-    )
-
 
 def _print_write_gate() -> None:
     if writes.writes_status():
@@ -97,50 +87,6 @@ async def _check_smoke_call() -> bool:
     me = data.get("me") or {}
     print(f"[ok]   Common_GetMe: id={me.get('id')!r} email={me.get('email')!r}")
     return True
-
-
-def _check_catalog_drift() -> None:
-    catalog_path = _api_recon_catalog_path()
-    if not catalog_path.exists():
-        print(f"[skip] catalog drift check: {catalog_path} not reachable")
-        return
-
-    try:
-        catalog = json.loads(catalog_path.read_text())
-    except (OSError, json.JSONDecodeError) as e:
-        print(f"[skip] catalog drift check: couldn't read catalog ({e})")
-        return
-
-    catalog_ops = catalog.get("operations", {})
-    for op_name, entry in sorted(operations.PROVENANCE.items()):
-        vendored_hash = entry.get("catalog_query_hash")
-        if vendored_hash is None:
-            print(f"[skip] {op_name}: vendored as a deliberate subset, not a verbatim export")
-            continue
-        if not entry.get("walk_reachable", True):
-            print(
-                f"[skip] {op_name}: a mutation, or a query the nightly "
-                "read-only walk never happens to visit (see its PROVENANCE "
-                "note for which) -- either way the walk can never "
-                "re-observe it in the live catalog, so a permanent 'not in "
-                "current catalog' [warn] here would be noise, not drift"
-            )
-            continue
-        catalog_entry = catalog_ops.get(op_name)
-        if catalog_entry is None:
-            print(f"[warn] {op_name}: not in current catalog (removed or renamed?)")
-            continue
-        live_hash = catalog_entry.get("query_hash")
-        if live_hash == vendored_hash:
-            print(f"[ok]   {op_name}: catalog hash unchanged since vendoring")
-        else:
-            vendored_short = vendored_hash[:12] if vendored_hash else None
-            live_short = live_hash[:12] if live_hash else None
-            print(
-                f"[warn] {op_name}: catalog hash changed since vendoring "
-                f"({vendored_short}… -> {live_short}…) -- consider "
-                "re-running the vendoring checklist (operations/README.md)"
-            )
 
 
 def _is_unsafe_op(op_name: str) -> bool:
@@ -197,7 +143,11 @@ def main() -> None:
     ok = material is not None
     if material is not None:
         ok = asyncio.run(_check_smoke_call()) and ok
-    _check_catalog_drift()
+    print(
+        "[info] catalog drift: not checked here -- api-recon's drift-watch reads "
+        "`python -m monarch_client.operations --provenance-json` and compares it "
+        "against its own live catalog"
+    )
 
     if not ok:
         sys.exit(1)

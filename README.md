@@ -57,9 +57,10 @@ drift-watch (`~/src/api-recon/scripts/drift-watch.sh monarch`, a launchd job)
 catches this automatically, scoped to only the operations `monarch_client`
 actually vendors — see api-recon's DESIGN.md §6e. To investigate by hand:
 
-1. **Check `monarch_client.doctor`** (below) — it compares each vendored
-   operation's recorded query hash against api-recon's live catalog and
-   flags anything that's drifted.
+1. **Run api-recon's drift check** — it reads this repo's vendored-op
+   records (`python -m monarch_client.operations --provenance-json`) and
+   compares each recorded query hash against api-recon's live catalog.
+   (`monarch_client.doctor` no longer does this comparison itself; see below.)
 2. **Re-capture via api-recon.** `recon walk monarch --headless && recon
    catalog monarch` rebuilds the catalog from real traffic; `recon
    export-ops monarch --op <Name> --out monarch_client/operations/` re-vendors
@@ -75,10 +76,12 @@ actually vendors — see api-recon's DESIGN.md §6e. To investigate by hand:
 .venv/bin/python -m monarch_client.doctor
 ```
 
-Reads the current auth file, makes one live smoke call, and flags any
-vendored operation whose text has drifted from api-recon's current catalog
-(skipping mutations the nightly walk can never re-observe — see
-`monarch_client/operations/__init__.py`'s `walk_reachable` note).
+Reads the current auth file, makes one live smoke call, and prints whether
+the write gate is open. It does **not** check catalog drift: that comparison
+lives in api-recon, which consumes
+`python -m monarch_client.operations --provenance-json` (each vendored op's
+name, path, recorded hash, and `walk_reachable` flag — the contract is
+documented in `monarch_client/operations/__main__.py`).
 `monarch_client` never shells out to `recon` itself — if auth looks stale,
 the fix is the two commands above, run again.
 
