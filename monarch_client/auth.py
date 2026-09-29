@@ -56,10 +56,10 @@ from .errors import MonarchAuthError
 DEFAULT_SITE = "monarch"
 API_HOST = "api.monarch.com"
 
-# Same default state directory monarch-mcp's own config.py uses -- not
-# imported from there (this package has zero monarch-mcp imports, so it can
-# be lifted into its own repo later with a `git mv`), just the same
-# sensible default location for this machine's Monarch-related state.
+# Default state directory for this machine's Monarch-related state. Owned
+# here rather than imported from monarch-mcp (this package has zero
+# monarch-mcp imports, so it can be lifted into its own repo later with a
+# `git mv`).
 STATE_DIR = Path(os.environ.get("MONARCH_CLIENT_HOME", Path.home() / ".monarch-mcp"))
 
 # Set to the last-announced site once load() has printed it, so a

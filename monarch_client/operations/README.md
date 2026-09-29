@@ -32,8 +32,8 @@ in automatically.
 
    and eyeball the diff for suspicious `: 0` / `: 0.0` arguments that don't
    look like they should be zero (there's no automated way to catch these --
-   see M0 in the design notes for a proposed loud-warning fix in
-   `recon export-ops` itself, not yet built).
+   a loud-warning fix in `recon export-ops` itself was proposed but is
+   not yet built).
 
 3. **Recover any redacted/zeroed literal from the raw HAR.** Request
    *bodies* are never redacted, only headers -- so the true value lives in
@@ -69,7 +69,7 @@ in automatically.
    - `note` -- what this op backs, and any caveats worth a future reader
      knowing (e.g. unverified filter fields, missing drift coverage).
 
-6. **Run the tests** (`tests/test_operations.py`) -- they assert every
+6. **Run the tests** (`monarch_client/tests/test_operations.py`) -- they assert every
    vendored file's hash matches what's recorded, and that no file contains
    an un-repaired redaction placeholder.
 
