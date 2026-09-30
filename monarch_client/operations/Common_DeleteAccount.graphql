@@ -1,0 +1,25 @@
+# source: api-recon sandbox UI capture 2026-09-30 (captured-mutations-2026-09-30.json), operation 'Common_DeleteAccount'
+# captured from the live monarch-sandbox web app; query text verbatim.
+# NOT authoritative -- observed traffic, not a schema fetch. See operations/README.md.
+
+mutation Common_DeleteAccount($id: UUID!) {
+  deleteAccount(id: $id) {
+    deleted
+    errors {
+      ...PayloadErrorFields
+      __typename
+    }
+    __typename
+  }
+}
+
+fragment PayloadErrorFields on PayloadError {
+  fieldErrors {
+    field
+    messages
+    __typename
+  }
+  message
+  code
+  __typename
+}

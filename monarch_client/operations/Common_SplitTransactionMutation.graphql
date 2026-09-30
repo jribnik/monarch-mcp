@@ -1,0 +1,84 @@
+# source: api-recon captured-mutations-2026-09-30.json (monarch-sandbox, live web app capture), operation 'Common_SplitTransactionMutation'
+# NOT authoritative -- see operations/README.md.
+# Mutation: walk_reachable=False (the read-only nightly walk can never re-observe it).
+
+mutation Common_SplitTransactionMutation($input: UpdateTransactionSplitMutationInput!) {
+  updateTransactionSplit(input: $input) {
+    errors {
+      ...PayloadErrorFields
+      __typename
+    }
+    transaction {
+      id
+      hasSplitTransactions
+      splitTransactions {
+        id
+        amount
+        notes
+        hideFromReports
+        reviewStatus
+        merchant {
+          id
+          name
+          __typename
+        }
+        category {
+          id
+          icon
+          name
+          __typename
+        }
+        goal {
+          id
+          __typename
+        }
+        savingsGoalEvent {
+          id
+          goal {
+            id
+            __typename
+          }
+          account {
+            id
+            __typename
+          }
+          __typename
+        }
+        needsReviewByUser {
+          id
+          __typename
+        }
+        tags {
+          id
+          __typename
+        }
+        ownedByUser {
+          id
+          __typename
+        }
+        businessEntity {
+          id
+          name
+          logoUrl
+          color
+          __typename
+        }
+        businessEntityOverriddenAt
+        __typename
+      }
+      __typename
+    }
+    __typename
+  }
+}
+
+fragment PayloadErrorFields on PayloadError {
+  fieldErrors {
+    field
+    messages
+    __typename
+  }
+  message
+  code
+  __typename
+}

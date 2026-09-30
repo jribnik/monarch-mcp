@@ -27,6 +27,9 @@ from mcp.server.fastmcp import FastMCP
 
 from monarch_client import reads as client_reads
 from monarch_client import writes as client_writes
+from monarch_client import writes_accounts as client_writes_accounts
+from monarch_client import writes_categories as client_writes_categories
+from monarch_client import writes_splits_rules as client_writes_splits_rules
 
 mcp = FastMCP("monarch")
 
@@ -387,6 +390,283 @@ async def create_manual_account(
         display_balance=display_balance,
         include_in_net_worth=include_in_net_worth,
     )
+
+
+@mcp.tool()
+async def create_category_group(
+    name: str,
+    type: str = "expense",
+    group_level_budgeting_enabled: bool = False,
+    rollover_enabled: bool = False,
+    rollover_start_month: Optional[str] = None,
+    rollover_type: str = "monthly",
+) -> dict[str, Any]:
+    """Create a category group. type is 'expense', 'income' or 'transfer'.
+    rollover_start_month is an ISO date (first of a month, default current
+    month). Returns the new group (id, name, type, order, ...)."""
+    return await client_writes_categories.create_category_group(
+        name, type, group_level_budgeting_enabled, rollover_enabled,
+        rollover_start_month, rollover_type)
+
+
+@mcp.tool()
+async def update_category_group(
+    group_id: str,
+    name: Optional[str] = None,
+    group_level_budgeting_enabled: Optional[bool] = None,
+    rollover_enabled: Optional[bool] = None,
+    rollover_start_month: Optional[str] = None,
+    rollover_type: Optional[str] = None,
+    rollover_starting_balance: Optional[float] = None,
+    budget_variability: Optional[str] = None,
+) -> dict[str, Any]:
+    """Update a category group (rename, budgeting flags). Only the fields you
+    pass are changed. Get group ids from get_categories."""
+    return await client_writes_categories.update_category_group(
+        group_id, name, group_level_budgeting_enabled, rollover_enabled,
+        rollover_start_month, rollover_type, rollover_starting_balance,
+        budget_variability)
+
+
+@mcp.tool()
+async def delete_category_group(
+    group_id: str, move_to_group_id: Optional[str] = None
+) -> dict[str, Any]:
+    """Delete a category group. Fails with "Category group is not empty" if it
+    still has categories -- pass move_to_group_id to re-home them, or move
+    them first (update_category with group_id). Returns {deleted, errors}."""
+    return await client_writes_categories.delete_category_group(
+        group_id, move_to_group_id)
+
+
+@mcp.tool()
+async def create_category(
+    name: str,
+    group_id: str,
+    icon: str = "❓",
+    type: str = "expense",
+    exclude_from_budget: bool = False,
+    budget_variability: str = "flexible",
+    rollover_enabled: bool = False,
+    rollover_start_month: Optional[str] = None,
+    rollover_starting_balance: float = 0,
+    rollover_frequency: str = "monthly",
+) -> dict[str, Any]:
+    """Create a category inside a category group (group_id from
+    get_categories). icon is a single emoji. Returns the new category."""
+    return await client_writes_categories.create_category(
+        name, group_id, icon, type, exclude_from_budget, budget_variability,
+        rollover_enabled, rollover_start_month, rollover_starting_balance,
+        rollover_frequency)
+
+
+@mcp.tool()
+async def update_category(
+    category_id: str,
+    name: Optional[str] = None,
+    icon: Optional[str] = None,
+    group_id: Optional[str] = None,
+    type: Optional[str] = None,
+    exclude_from_budget: Optional[bool] = None,
+    budget_variability: Optional[str] = None,
+    rollover_enabled: Optional[bool] = None,
+    rollover_start_month: Optional[str] = None,
+    rollover_starting_balance: Optional[float] = None,
+    rollover_frequency: Optional[str] = None,
+) -> dict[str, Any]:
+    """Update a category: rename, change icon, move to another group
+    (group_id), budget flags. Only the fields you pass are changed."""
+    return await client_writes_categories.update_category(
+        category_id, name, icon, group_id, type, exclude_from_budget,
+        budget_variability, rollover_enabled, rollover_start_month,
+        rollover_starting_balance, rollover_frequency)
+
+
+@mcp.tool()
+async def delete_category(
+    category_id: str, move_to_category_id: Optional[str] = None
+) -> dict[str, Any]:
+    """Delete a category. Its transactions are reassigned to
+    move_to_category_id if given; otherwise they become 'Uncategorized'
+    (and budget history for the category is lost). Returns {deleted, errors}."""
+    return await client_writes_categories.delete_category(
+        category_id, move_to_category_id)
+
+
+@mcp.tool()
+async def update_tag(tag_id: str, name: str, color: str) -> dict[str, Any]:
+    """Rename and/or recolor a transaction tag (tag_id from get_tags; color is
+    a hex string like '#E5484D'). Pass the existing value for whichever of
+    name/color you are not changing."""
+    return await client_writes_categories.update_tag(tag_id, name, color)
+
+
+@mcp.tool()
+async def update_merchant(
+    merchant_id: str,
+    name: str,
+    default_category_id: Optional[str] = None,
+    default_category_application_mode: str = "new_and_edits",
+    is_recurring: bool = False,
+    recurring_amount: float = 0,
+    recurring_is_active: bool = True,
+    recurring_frequency: Optional[str] = None,
+    recurring_base_date: Optional[str] = None,
+) -> dict[str, Any]:
+    """Update a merchant's name, default category, and recurring-stream
+    settings. WARNING: setting name to another EXISTING merchant's name MERGES
+    the two (irreversible here). The full object is always sent, so pass the
+    merchant's current name when only changing recurrence, and
+    default_category_id=None leaves no default. For is_recurring=True you must
+    give recurring_frequency (e.g. 'monthly') and recurring_base_date
+    (ISO date); recurring_amount is negative for expenses."""
+    return await client_writes_categories.update_merchant(
+        merchant_id, name, default_category_id,
+        default_category_application_mode, is_recurring, recurring_amount,
+        recurring_is_active, recurring_frequency, recurring_base_date)
+
+@mcp.tool()
+async def update_account(
+    account_id: str,
+    name: Optional[str] = None,
+    display_balance: Optional[float] = None,
+    notes: Optional[str] = None,
+    account_type: Optional[str] = None,
+    account_subtype: Optional[str] = None,
+    hide_from_list: Optional[bool] = None,
+    hide_in_budget: Optional[bool] = None,
+    hide_transactions_from_reports: Optional[bool] = None,
+    include_in_net_worth: Optional[bool] = None,
+    interest_rate: Optional[float] = None,
+) -> dict:
+    """Edit a MANUAL (non-bank-linked) account. Only the fields you pass change;
+    everything else is preserved. notes="" clears notes. account_type and
+    account_subtype must be passed together (a pair from get_account_type_options).
+    Bank-linked accounts are refused. Requires writes enabled."""
+    return await client_writes_accounts.update_account(
+        account_id, name, display_balance, notes, account_type, account_subtype,
+        hide_from_list, hide_in_budget, hide_transactions_from_reports,
+        include_in_net_worth, interest_rate)
+
+
+@mcp.tool()
+async def delete_account(account_id: str, confirm_name: str) -> dict:
+    """IRREVERSIBLE: permanently deletes a MANUAL account AND ALL ITS TRANSACTIONS
+    and balance history. confirm_name must exactly equal the account's current
+    name (case-sensitive) or nothing happens. Bank-linked accounts are refused.
+    Only call when the user has explicitly asked to delete that specific account."""
+    return await client_writes_accounts.delete_account(account_id, confirm_name)
+
+
+@mcp.tool()
+async def set_budget_amount(category_id: str, amount: float, month: str,
+                            apply_to_future: bool = False) -> dict:
+    """Set one category's budgeted amount for one month (month = 'YYYY-MM-01').
+    apply_to_future defaults to False (this month only); True also overwrites the
+    budget for ALL later months, so only set it when the user asked for that."""
+    return await client_writes_accounts.set_budget_amount(category_id, amount, month, apply_to_future)
+
+
+@mcp.tool()
+async def set_flex_budget_amount(amount: float, month: str,
+                                 apply_to_future: bool = False) -> dict:
+    """Set the flexible-spending budget total for one month (month = 'YYYY-MM-01').
+    apply_to_future defaults to False; True overwrites all later months too."""
+    return await client_writes_accounts.set_flex_budget_amount(amount, month, apply_to_future)
+
+
+@mcp.tool()
+async def create_savings_goal(name: str, target_amount: Optional[float] = None,
+                              target_date: Optional[str] = None,
+                              is_sinking_fund: bool = False) -> dict:
+    """Create one savings goal (target_date 'YYYY-MM-DD'). Creates the goal, then
+    applies target amount/date/sinking-fund via a follow-up update."""
+    return await client_writes_accounts.create_savings_goal(name, target_amount, target_date, is_sinking_fund)
+
+
+@mcp.tool()
+async def update_savings_goal(goal_id: str, name: Optional[str] = None,
+                              target_amount: Optional[float] = None,
+                              target_date: Optional[str] = None,
+                              is_sinking_fund: Optional[bool] = None) -> dict:
+    """Update a savings goal. Only the fields passed change."""
+    return await client_writes_accounts.update_savings_goal(goal_id, name, target_amount, target_date, is_sinking_fund)
+
+
+@mcp.tool()
+async def set_savings_goal_budget_amount(goal_id: str, amount: float, month: str,
+                                         apply_to_future: bool = False,
+                                         account_id: Optional[str] = None) -> dict:
+    """Set the budgeted monthly contribution to a savings goal (month = 'YYYY-MM-01').
+    apply_to_future defaults to False; True overwrites all later months too."""
+    return await client_writes_accounts.set_savings_goal_budget_amount(goal_id, amount, month, apply_to_future, account_id)
+
+
+@mcp.tool()
+async def delete_savings_goal(goal_id: str) -> dict:
+    """IRREVERSIBLE: permanently deletes a savings goal and its contribution
+    history. Only call when the user explicitly asked to delete that goal."""
+    return await client_writes_accounts.delete_savings_goal(goal_id)
+
+@mcp.tool()
+async def split_transaction(transaction_id: str, splits: list[dict]) -> str:
+    """Split a transaction into 2+ parts (WRITE). Each split is
+    {amount, category_id?, merchant_name?, hide_from_reports?}. Amounts are
+    signed like the transaction (an expense is NEGATIVE) and must sum EXACTLY,
+    to the cent, to the transaction's current amount, otherwise nothing is sent.
+    Omitted category_id / merchant_name default to the original transaction's.
+    Splitting an already-split transaction replaces the old split. Check
+    `errors` in the result; use unsplit_transaction to undo."""
+    return await client_writes_splits_rules.split_transaction(transaction_id, splits)
+
+
+@mcp.tool()
+async def unsplit_transaction(transaction_id: str) -> str:
+    """Remove a transaction's split, restoring a single transaction (WRITE)."""
+    return await client_writes_splits_rules.unsplit_transaction(transaction_id)
+
+
+@mcp.tool()
+async def update_transaction_rule(
+    rule_id: str,
+    merchant_name_criteria: list[dict] | None = None,
+    original_statement_criteria: list[dict] | None = None,
+    amount_criteria: dict | None = None,
+    category_ids: list[str] | None = None,
+    account_ids: list[str] | None = None,
+    set_category_action: str | None = None,
+    set_merchant_name: str | None = None,
+    add_tag_ids: list[str] | None = None,
+    set_hide_from_reports: bool | None = None,
+    review_status: str | None = None,
+    needs_review_by_user_id: str | None = None,
+    link_goal_id: str | None = None,
+    link_savings_goal_id: str | None = None,
+    split_action: dict | None = None,
+    apply_to_existing_transactions: bool = False,
+) -> str:
+    """Update an existing transaction rule (WRITE). Same criteria/actions as
+    create_transaction_rule plus add_tag_ids, set_hide_from_reports,
+    review_status ("needs_review" / "reviewed"), needs_review_by_user_id,
+    link_goal_id, link_savings_goal_id and split_action. The rule is read first
+    and merged: an argument left unset KEEPS the rule's current value; an empty
+    value ([] / "" / {}) CLEARS that field. A rule must keep at least one
+    criterion and one action. split_action = {"splits": [{"percent": 60,
+    "category_id": ..., "merchant_name": ..., "hide_from_reports": ...}, ...]}
+    with percents summing to exactly 100 (percentage splits only). set_merchant_name
+    must exactly match an existing merchant. The response has no rule in it:
+    confirm with get_transaction_rules. `errors` non-null (even an empty
+    object, flagged with a `hint`) means the update was rejected."""
+    return await client_writes_splits_rules.update_transaction_rule(
+        rule_id, merchant_name_criteria=merchant_name_criteria,
+        original_statement_criteria=original_statement_criteria,
+        amount_criteria=amount_criteria, category_ids=category_ids, account_ids=account_ids,
+        set_category_action=set_category_action, set_merchant_name=set_merchant_name,
+        add_tag_ids=add_tag_ids, set_hide_from_reports=set_hide_from_reports,
+        review_status=review_status, needs_review_by_user_id=needs_review_by_user_id,
+        link_goal_id=link_goal_id, link_savings_goal_id=link_savings_goal_id,
+        split_action=split_action,
+        apply_to_existing_transactions=apply_to_existing_transactions)
 
 
 if __name__ == "__main__":

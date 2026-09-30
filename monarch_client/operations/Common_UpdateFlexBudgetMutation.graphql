@@ -1,0 +1,14 @@
+# source: api-recon sandbox UI capture 2026-09-30 (captured-mutations-2026-09-30.json), operation 'Common_UpdateFlexBudgetMutation'
+# captured from the live monarch-sandbox web app; query text verbatim.
+# NOT authoritative -- observed traffic, not a schema fetch. See operations/README.md.
+
+mutation Common_UpdateFlexBudgetMutation($input: UpdateOrCreateFlexBudgetItemMutationInput!) {
+  updateOrCreateFlexBudgetItem(input: $input) {
+    budgetItem {
+      id
+      budgetAmount
+      __typename
+    }
+    __typename
+  }
+}

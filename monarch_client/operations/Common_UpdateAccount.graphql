@@ -1,0 +1,122 @@
+# source: api-recon sandbox UI capture 2026-09-30 (captured-mutations-2026-09-30.json), operation 'Common_UpdateAccount'
+# captured from the live monarch-sandbox web app; query text verbatim.
+# NOT authoritative -- observed traffic, not a schema fetch. See operations/README.md.
+
+mutation Common_UpdateAccount($input: UpdateAccountMutationInput!) {
+  updateAccount(input: $input) {
+    account {
+      ...AccountFields
+      notes
+      __typename
+    }
+    errors {
+      ...PayloadErrorFields
+      __typename
+    }
+    __typename
+  }
+}
+
+fragment AccountFields on Account {
+  id
+  displayName
+  syncDisabled
+  deactivatedAt
+  dataProviderDeactivatedAt
+  isHidden
+  isAsset
+  mask
+  createdAt
+  updatedAt
+  displayLastUpdatedAt
+  currentBalance
+  displayBalance
+  includeInNetWorth
+  hideFromList
+  hideInBudget
+  hideTransactionsFromReports
+  includeBalanceInNetWorth
+  includeInGoalBalance
+  excludeFromDebtPaydown
+  dataProvider
+  dataProviderAccountId
+  isManual
+  transactionsCount
+  holdingsCount
+  manualInvestmentsTrackingMethod
+  order
+  icon
+  logoUrl
+  deactivatedAt
+  limit
+  apr
+  minimumPayment
+  plannedPayment
+  interestRate
+  interestRateType
+  type {
+    name
+    display
+    group
+    __typename
+  }
+  subtype {
+    name
+    display
+    __typename
+  }
+  credential {
+    id
+    updateRequired
+    syncDisabledAt
+    syncDisabledReason
+    dataProvider
+    institution {
+      id
+      newConnectionsDisabled
+      plaidInstitutionId
+      name
+      status
+      logo
+      __typename
+    }
+    __typename
+  }
+  institution {
+    id
+    name
+    logo
+    primaryColor
+    url
+    __typename
+  }
+  ownedByUser {
+    id
+    displayName
+    profilePictureUrl
+    __typename
+  }
+  businessEntity {
+    id
+    name
+    logoUrl
+    color
+    __typename
+  }
+  connectionStatus {
+    connectionStatusCode
+    __typename
+  }
+  __typename
+}
+
+fragment PayloadErrorFields on PayloadError {
+  fieldErrors {
+    field
+    messages
+    __typename
+  }
+  message
+  code
+  __typename
+}
