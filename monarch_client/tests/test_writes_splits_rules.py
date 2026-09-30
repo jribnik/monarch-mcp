@@ -501,3 +501,25 @@ async def test_split_hide_from_reports_defaults_to_parent(fake):
     )
     items = fake.calls[-1][1]["input"]["splitData"]
     assert [i["hideFromReports"] for i in items] == [True, False]
+
+
+@pytest.mark.asyncio
+async def test_update_rule_derived_unassign_does_not_mask_owner_fields(fake):
+    fake.responses["Web_GetTransactionRules"] = {"transactionRules": [_existing_rule(
+        reviewStatusAction="needs_review", unassignNeedsReviewByUserAction=True,
+        criteriaOwnerUserIds=["u1"])]}
+    with pytest.raises(ValueError) as ei:
+        await w.update_transaction_rule("r1", add_tag_ids=["t2"])
+    assert "criteriaOwnerUserIds" in str(ei.value)
+    assert "unassignNeedsReviewByUserAction" not in str(ei.value)
+    assert all(op != "Common_UpdateTransactionRuleMutationV2" for op, _ in fake.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["reviewed", ""])
+async def test_update_rule_changing_status_from_needs_review_is_allowed(fake, status):
+    fake.responses["Web_GetTransactionRules"] = {"transactionRules": [_existing_rule(
+        reviewStatusAction="needs_review", unassignNeedsReviewByUserAction=True)]}
+    fake.responses["Common_UpdateTransactionRuleMutationV2"] = UPDATE_OK
+    await w.update_transaction_rule("r1", review_status=status)
+    assert fake.calls[-1][1]["input"]["reviewStatusAction"] == status

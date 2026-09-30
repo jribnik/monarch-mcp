@@ -122,7 +122,7 @@ Then restart Claude Code so it connects. Ask things like:
 | `get_recurring_transactions` | read | recurring transaction streams |
 | `get_account_type_options` | read | valid type/subtype pairs for create_manual_account |
 | `recategorize_transaction` | **write** | set a transaction's category |
-| `update_transaction` | **write** | edit merchant/amount/date/notes/flags |
+| `update_transaction` | **write** | edit merchant/amount/date/notes/flags; `reviewed=True` = Mark as reviewed |
 | `set_transaction_tags` | **write** | replace a transaction's tags |
 | `create_tag` | **write** | create a new tag |
 | `delete_tag` | **write** | delete a tag by id |

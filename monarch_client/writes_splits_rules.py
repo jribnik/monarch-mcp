@@ -434,7 +434,9 @@ async def update_transaction_rule(
     when unchanged). Fails closed: if the existing rule sets any of
     UNCARRIED_RULE_FIELDS (owner / business-entity criteria, owner and
     business-entity actions, send-notification, paydown-budget link,
-    unassign-needs-review) the update is REFUSED, since the update input has
+    unassign-needs-review -- the last one except when it is derived from
+    reviewStatusAction='needs_review', which Monarch sets itself and clears when
+    a reviewer is assigned; verified live 2026-09-30) the update is REFUSED, since the update input has
     no verified slot for them and sending would reset them. A call with no
     arguments besides rule_id is also refused."""
     _require_writes("update_transaction_rule")
