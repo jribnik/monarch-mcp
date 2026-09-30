@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import inspect
-from importlib import resources
-
 import json
+from importlib import resources
 
 import pytest
 
@@ -219,7 +218,7 @@ async def test_update_merchant_no_category_no_stream_stays_empty(fake_client):
     i = _sent(fake_client)
     assert i["name"] == "Old" and i["defaultCategoryId"] == "c5"
     assert i["recurrence"] == {"isRecurring": False, "amount": 0, "isActive": True}
-    # no rename -> no merge-guard search
+    # no rename -> no duplicate-name search
     assert all(n != "Common_SearchMerchantsByName" for n, _ in fake_client.calls)
 
 
@@ -290,6 +289,7 @@ async def test_update_merchant_server_duplicate_name_error_is_surfaced(fake_clie
         "errors": {"fieldErrors": [{"field": "name", "messages": [
             "A merchant with this name already exists"]}], "message": None, "code": None}}}
     out = await wc.update_merchant("m1", name="Taken")
+    assert out["merchant"] is None
     assert out["errors"] is not None
     assert "already exists" in json.dumps(out["errors"])
 
@@ -363,3 +363,20 @@ def test_provenance_entry_shape_matches_existing():
     ref = set(operations.PROVENANCE["Common_DeleteTransactionMutation"]) | {"walk_reachable"}
     for entry in wc.PROVENANCE_ENTRIES.values():
         assert set(entry) == ref
+
+
+@pytest.mark.asyncio
+async def test_update_merchant_strips_padded_name_and_hits_precheck(fake_client):
+    # A padded duplicate must not sneak past the pre-check as a look-alike merchant.
+    _setup(fake_client, others=[{"id": "m2", "name": "Taken", "transactionCount": 2}])
+    with pytest.raises(ValueError, match="already exists"):
+        await wc.update_merchant("m1", name="  Taken  ")
+    assert all(n != "Common_UpdateMerchant" for n, _ in fake_client.calls)
+
+
+@pytest.mark.asyncio
+async def test_update_merchant_sends_stripped_name(fake_client):
+    _setup(fake_client)
+    await wc.update_merchant("m1", name="  Fresh Name  ")
+    assert _sent(fake_client)["name"] == "Fresh Name"
+    assert any(n == "Common_SearchMerchantsByName" for n, _ in fake_client.calls)

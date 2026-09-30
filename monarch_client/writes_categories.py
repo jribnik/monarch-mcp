@@ -118,7 +118,7 @@ PROVENANCE_ENTRIES: dict[str, dict] = {
     ),
     "Common_SearchMerchantsByName": _prov_hw(
         "Common_SearchMerchantsByName",
-        "backs update_merchant's rename-merge guard. HAND-WRITTEN read-only "
+        "backs update_merchant's duplicate-name pre-check. HAND-WRITTEN read-only "
         "query merchants(search, limit, offset); verified live on monarch-sandbox",
     ),
 }
@@ -438,7 +438,8 @@ async def _verify_no_other_merchant_named(merchant_id: str, name: str) -> None:
         raise ValueError(
             f"update_merchant: a merchant named {c.get('name')!r} already exists "
             f"(id {c.get('id')}, {c.get('transactionCount')} transactions) and "
-            "Monarch does not allow renaming onto it. To merge this merchant's "
+            "Monarch rejects renaming onto an existing name (case-insensitive, "
+            "verified live). To merge this merchant's "
             "transactions into it, use update_transaction with "
             "merchant_name set to that name on each transaction."
         )
@@ -482,6 +483,12 @@ async def update_merchant(
             "clear_default_category=True, not both"
         )
     cur = await _get_merchant(merchant_id)
+    if name is not None:
+        # Monarch stores names verbatim (verified live 2026-09-30: a padded
+        # '  X  ' became its own merchant next to 'X'), so strip here -- a
+        # padded duplicate then hits the server's exact-name rejection
+        # instead of silently creating a look-alike merchant.
+        name = name.strip()
     new_name = name if name is not None else cur.get("name")
     if name is not None and name != cur.get("name"):
         await _verify_no_other_merchant_named(merchant_id, name)
