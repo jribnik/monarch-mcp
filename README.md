@@ -8,7 +8,7 @@ budgets, etc. Built to replace Monarch's own MCP server, which has been offline.
 Built entirely on [`monarch_client`](monarch_client/) — a self-contained client
 against Monarch's real GraphQL API, using plain HTTP + vendored query text
 captured from the real web app by [api-recon](https://github.com/jribnik/api-recon).
-**Full coverage: 22 tools (11 read, including one write-adjacent dry-run, and 11 write)**, all captured
+**Full coverage: 41 tools (11 read, including one write-adjacent dry-run, and 30 write)**, all captured
 and/or verified against a dedicated, disposable `monarch-sandbox` account
 before ever touching the real one. See `monarch_client/__init__.py`'s module
 docstring for the package's full shape.
@@ -132,6 +132,15 @@ Then restart Claude Code so it connects. Ask things like:
 | `create_transaction` | **write** | create a manual transaction |
 | `delete_transaction` | **write** | delete a transaction by id |
 | `create_manual_account` | **write** | create a manual (non-bank-linked) account |
+| `create_category_group` / `update_category_group` / `delete_category_group` | **write** | category group CRUD (delete needs an empty group or `move_to_group_id`) |
+| `create_category` / `update_category` / `delete_category` | **write** | category CRUD (delete needs `move_to_category_id` or explicit `uncategorize_transactions=True`) |
+| `update_tag` | **write** | rename / recolor a tag |
+| `update_merchant` | **write** | rename, default category, recurring stream (reads current values first, unset args keep them; renaming onto an existing merchant would MERGE and is refused unless `allow_merge=True`) |
+| `update_account` / `delete_account` | **write** | edit a manual account; delete needs `confirm_name`, refuses bank-linked |
+| `set_budget_amount` / `set_flex_budget_amount` | **write** | planned amounts; `apply_to_future` defaults False |
+| `create_savings_goal` / `update_savings_goal` / `set_savings_goal_budget_amount` / `delete_savings_goal` | **write** | savings goals |
+| `split_transaction` / `unsplit_transaction` | **write** | split must sum exactly to the parent amount |
+| `update_transaction_rule` | **write** | full-rule update with merge; adds tag/hide/review/percentage-split actions |
 
 ## Security
 

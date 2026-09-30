@@ -85,3 +85,19 @@ class MonarchClient:
 
     async def aclose(self) -> None:
         await transport.aclose()
+
+
+# Provenance for the write modules added 2026-09-30 (sandbox UI sweep). Merged
+# here, after MonarchClient exists, because each writes_* module imports
+# `.writes` -> `operations`, so operations/__init__.py cannot import them
+# (circular). Runs on any import of the package, which includes
+# `python -m monarch_client.operations --provenance-json`.
+def _merge_extra_provenance() -> None:
+    from . import operations as _ops
+    from . import writes_accounts, writes_categories, writes_splits_rules
+
+    for mod in (writes_categories, writes_accounts, writes_splits_rules):
+        _ops.PROVENANCE.update(mod.PROVENANCE_ENTRIES)
+
+
+_merge_extra_provenance()

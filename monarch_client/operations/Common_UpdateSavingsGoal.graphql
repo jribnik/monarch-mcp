@@ -1,0 +1,43 @@
+# source: api-recon sandbox UI capture 2026-09-30 (captured-mutations-2026-09-30.json), operation 'Common_UpdateSavingsGoal'
+# captured from the live monarch-sandbox web app; query text verbatim.
+# NOT authoritative -- observed traffic, not a schema fetch. See operations/README.md.
+
+mutation Common_UpdateSavingsGoal($input: UpdateSavingsGoalInput!) {
+  updateSavingsGoal(input: $input) {
+    savingsGoal {
+      id
+      name
+      priority
+      imageStorageProvider
+      imageStorageProviderId
+      targetAmount
+      targetDate
+      currentMonthPlannedContributionAmount
+      status
+      isSinkingFund
+      progress
+      spendingTotal
+      netContribution
+      netContributionWithSpending
+      netContributionWithoutSpending
+      forecastedCompletionDate
+      __typename
+    }
+    errors {
+      ...PayloadErrorFields
+      __typename
+    }
+    __typename
+  }
+}
+
+fragment PayloadErrorFields on PayloadError {
+  fieldErrors {
+    field
+    messages
+    __typename
+  }
+  message
+  code
+  __typename
+}

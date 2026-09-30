@@ -1,0 +1,24 @@
+# source: api-recon captured-mutations-2026-09-30.json (monarch-sandbox, live web app capture), operation 'Common_UpdateTransactionRuleMutationV2'
+# NOT authoritative -- see operations/README.md.
+# Mutation: walk_reachable=False (the read-only nightly walk can never re-observe it).
+
+mutation Common_UpdateTransactionRuleMutationV2($input: UpdateTransactionRuleInput!) {
+  updateTransactionRuleV2(input: $input) {
+    errors {
+      ...PayloadErrorFields
+      __typename
+    }
+    __typename
+  }
+}
+
+fragment PayloadErrorFields on PayloadError {
+  fieldErrors {
+    field
+    messages
+    __typename
+  }
+  message
+  code
+  __typename
+}

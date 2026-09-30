@@ -1,0 +1,29 @@
+# source: HAND-WRITTEN read-only query (not a capture, not catalog-exported):
+#   selects the same merchant fields the captured Common_UpdateMerchant
+#   response returns, so update_merchant can read-before-write and preserve
+#   the merchant's current default category and recurring stream.
+# NOT authoritative. See operations/README.md.
+
+query Common_GetMerchantForEdit($id: ID!) {
+  merchant(id: $id) {
+    id
+    name
+    transactionCount
+    defaultCategoryApplicationMode
+    defaultCategory {
+      id
+      name
+      icon
+      __typename
+    }
+    recurringTransactionStream {
+      id
+      frequency
+      amount
+      baseDate
+      isActive
+      __typename
+    }
+    __typename
+  }
+}

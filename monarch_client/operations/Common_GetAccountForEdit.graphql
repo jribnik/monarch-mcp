@@ -1,0 +1,59 @@
+# source: HAND-WRITTEN subset of the catalog's Common_AccountDetails_getAccount
+# (EditAccountFormFields fragment, api-recon sandbox catalog 2026-09-24), trimmed
+# to the fields update_account/delete_account need. Not a verbatim capture.
+# NOT authoritative. See operations/README.md.
+
+query Common_GetAccountForEdit($id: UUID!) {
+  account(id: $id) {
+    ...EditAccountFormFields
+    __typename
+  }
+}
+
+fragment EditAccountFormFields on Account {
+  id
+  displayName
+  notes
+  deactivatedAt
+  displayBalance
+  includeInNetWorth
+  hideFromList
+  hideInBudget
+  hideTransactionsFromReports
+  dataProvider
+  dataProviderAccountId
+  isManual
+  isAsset
+  invertSyncedBalance
+  useAvailableBalance
+  limit
+  apr
+  interestRate
+  interestRateType
+  minimumPayment
+  plannedPayment
+  excludeFromDebtPaydown
+  type {
+    name
+    display
+    __typename
+  }
+  subtype {
+    name
+    display
+    __typename
+  }
+  credential {
+    id
+    __typename
+  }
+  ownedByUser {
+    id
+    __typename
+  }
+  businessEntity {
+    id
+    __typename
+  }
+  __typename
+}

@@ -1,0 +1,23 @@
+# source: api-recon sandbox UI capture (monarch-sandbox, a disposable test
+#   account) 2026-09-30, raw request body -- see
+#   /Users/jribnik/src/api-recon/artifacts/monarch-sandbox/captured-mutations-2026-09-30.json
+# query_hash: n/a (not catalog-exported)
+# NOT authoritative -- captured from OBSERVED traffic, not a schema fetch.
+#   See operations/README.md for the vendoring checklist.
+
+mutation Common_UpdateTransactionTag($input: UpdateTransactionTagInput!) {
+  updateTransactionTag(input: $input) {
+    tag {
+      id
+      name
+      color
+      order
+      __typename
+    }
+    errors {
+      message
+      __typename
+    }
+    __typename
+  }
+}
