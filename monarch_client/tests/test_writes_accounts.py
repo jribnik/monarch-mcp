@@ -248,3 +248,92 @@ def test_provenance_shape_and_sha():
         assert p["vendored_sha256"] == hashlib.sha256(operations.load(op).encode()).hexdigest()
         assert p["note"]
         assert operations.is_mutation(op) == (op != "Common_GetAccountForEdit")
+
+
+def test_recorded_hashes_are_hardcoded_and_match_files():
+    """Literals, not computed from the file at import: editing a .graphql
+    without re-recording must fail both this and verify_integrity."""
+    import re as _re
+    src = open(wa.__file__).read()
+    for op, p in wa.PROVENANCE_ENTRIES.items():
+        assert _re.fullmatch(r"[0-9a-f]{64}", p["vendored_sha256"])
+        assert p["vendored_sha256"] in src  # literal present in source
+        assert p["vendored_sha256"] == hashlib.sha256(operations.load(op).encode()).hexdigest()
+
+
+def test_edited_file_is_detected(monkeypatch):
+    op = "Common_DeleteAccount"
+    monkeypatch.setitem(operations.PROVENANCE, op, wa.PROVENANCE_ENTRIES[op])
+    operations.verify_integrity(op)  # clean
+    monkeypatch.setitem(operations._cache, op, operations.load(op) + "# tampered\n")
+    with pytest.raises(errors.VendoredOperationError):
+        operations.verify_integrity(op)
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf"), True, "5", -1])
+def test_check_amount_rejects_nonfinite(bad):
+    with pytest.raises(ValueError):
+        wa._check_amount(bad)
+
+
+@pytest.mark.asyncio
+async def test_nan_rejected_everywhere(fake):
+    nan = float("nan")
+    with pytest.raises(ValueError):
+        await wa.set_budget_amount("c", nan, "2026-10-01")
+    with pytest.raises(ValueError):
+        await wa.set_flex_budget_amount(float("inf"), "2026-10-01")
+    with pytest.raises(ValueError):
+        await wa.set_savings_goal_budget_amount("g", nan, "2026-10-01")
+    with pytest.raises(ValueError):
+        await wa.update_savings_goal("g", target_amount=nan)
+    with pytest.raises(ValueError):
+        await wa.update_account("a1", display_balance=nan)
+    with pytest.raises(ValueError):
+        await wa.update_account("a1", interest_rate=float("inf"))
+    assert _mutations(fake) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kw", [
+    {"target_amount": float("nan")}, {"target_amount": float("inf")},
+    {"target_amount": -5}, {"target_date": "06/2027"}, {"target_date": "2026-13-45"},
+])
+async def test_create_savings_goal_validates_before_create(fake, kw):
+    with pytest.raises(ValueError):
+        await wa.create_savings_goal("Trip", **kw)
+    assert fake.calls == []  # nothing created, no orphan
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("patch", [
+    {"isManual": None}, {"isManual": False}, {"credential": {"id": "c"}}, {"dataProvider": "plaid"},
+])
+async def test_require_manual_fails_closed(fake, patch):
+    fake.responses["Common_GetAccountForEdit"] = {"account": {**ACCOUNT, **patch}}
+    with pytest.raises(ValueError, match="manual"):
+        await wa.update_account("a1", display_balance=5)
+    with pytest.raises(ValueError, match="manual"):
+        await wa.delete_account("a1", "zz-acct")
+    assert _mutations(fake) == []
+
+
+@pytest.mark.asyncio
+async def test_missing_isManual_key_refused(fake):
+    acct = {k: v for k, v in ACCOUNT.items() if k != "isManual"}
+    fake.responses["Common_GetAccountForEdit"] = {"account": acct}
+    with pytest.raises(ValueError):
+        await wa.update_account("a1", display_balance=5)
+    assert _mutations(fake) == []
+
+
+@pytest.mark.asyncio
+async def test_display_balance_only_on_manual(fake):
+    fake.responses["Common_UpdateAccount"] = {"updateAccount": {"account": {"id": "a1"}, "errors": None}}
+    await wa.update_account("a1", display_balance=-42.5)
+    assert fake.calls[-1][1]["input"]["displayBalance"] == -42.5
+    fake.calls.clear()
+    fake.responses["Common_GetAccountForEdit"] = {"account": {**ACCOUNT, "credential": {"id": "c"}, "isManual": False}}
+    with pytest.raises(ValueError, match="bank-linked|manual"):
+        await wa.update_account("a1", display_balance=1)
+    assert _mutations(fake) == []

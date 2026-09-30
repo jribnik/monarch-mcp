@@ -133,9 +133,9 @@ Then restart Claude Code so it connects. Ask things like:
 | `delete_transaction` | **write** | delete a transaction by id |
 | `create_manual_account` | **write** | create a manual (non-bank-linked) account |
 | `create_category_group` / `update_category_group` / `delete_category_group` | **write** | category group CRUD (delete needs an empty group or `move_to_group_id`) |
-| `create_category` / `update_category` / `delete_category` | **write** | category CRUD (delete without a move target leaves its transactions Uncategorized) |
+| `create_category` / `update_category` / `delete_category` | **write** | category CRUD (delete needs `move_to_category_id` or explicit `uncategorize_transactions=True`) |
 | `update_tag` | **write** | rename / recolor a tag |
-| `update_merchant` | **write** | rename, default category, recurring stream (renaming to an existing merchant MERGES) |
+| `update_merchant` | **write** | rename, default category, recurring stream (reads current values first, unset args keep them; renaming onto an existing merchant would MERGE and is refused unless `allow_merge=True`) |
 | `update_account` / `delete_account` | **write** | edit a manual account; delete needs `confirm_name`, refuses bank-linked |
 | `set_budget_amount` / `set_flex_budget_amount` | **write** | planned amounts; `apply_to_future` defaults False |
 | `create_savings_goal` / `update_savings_goal` / `set_savings_goal_budget_amount` / `delete_savings_goal` | **write** | savings goals |

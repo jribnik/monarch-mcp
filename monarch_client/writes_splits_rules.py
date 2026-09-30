@@ -142,7 +142,9 @@ def _to_cents(value: Any, what: str) -> Decimal:
     return q
 
 
-def _split_item(split: dict[str, Any], index: int, amount: Decimal) -> dict[str, Any]:
+def _split_item(
+    split: dict[str, Any], index: int, amount: Decimal, default_hide: bool = False
+) -> dict[str, Any]:
     unknown = set(split) - {"amount", "category_id", "merchant_name", "hide_from_reports"}
     if unknown:
         raise ValueError(f"splits[{index}] has unknown keys {sorted(unknown)}")
@@ -150,7 +152,11 @@ def _split_item(split: dict[str, Any], index: int, amount: Decimal) -> dict[str,
         "amount": float(amount),
         "categoryId": split.get("category_id"),
         "merchantName": split.get("merchant_name"),
-        "hideFromReports": bool(split.get("hide_from_reports") or False),
+        "hideFromReports": (
+            default_hide
+            if split.get("hide_from_reports") is None
+            else bool(split["hide_from_reports"])
+        ),
         "ownerUserId": None,
         "businessEntityId": None,
         "businessEntityIsUnassigned": False,
@@ -167,7 +173,14 @@ async def split_transaction(
     a fresh get_transaction_details read before anything is sent. Omitted
     category_id / merchant_name default to the original transaction's
     (verified live). Splitting an already-split transaction replaces the
-    earlier split; use unsplit_transaction to undo."""
+    earlier split; use unsplit_transaction to undo.
+
+    Refuses zero-amount splits and splits whose sign differs from the
+    transaction's (mixed-sign). hide_from_reports defaults to the PARENT's
+    current hideFromReports (read from get_transaction_details) unless given.
+    NOT carried from the parent: owner (ownerUserId) and business entity --
+    these are always sent as unset/unassigned, so a split of a transaction
+    owned by a household member or business entity will not inherit that."""
     _require_writes("split_transaction")
     if not isinstance(splits, list) or len(splits) < 2:
         raise ValueError(
@@ -178,13 +191,22 @@ async def split_transaction(
     for i, s in enumerate(splits):
         if not isinstance(s, dict) or "amount" not in s:
             raise ValueError(f"splits[{i}] must be a dict with an 'amount'")
-        amounts.append(_to_cents(s["amount"], f"splits[{i}].amount"))
+        a = _to_cents(s["amount"], f"splits[{i}].amount")
+        if a == 0:
+            raise ValueError(f"splits[{i}].amount is zero -- zero-amount splits are not allowed")
+        amounts.append(a)
 
     details = await reads.get_transaction_details(transaction_id)
     txn = details.get("getTransaction")
     if not txn or txn.get("amount") is None:
         raise ValueError(f"transaction_id={transaction_id!r} wasn't found")
     total = _to_cents(txn["amount"], "transaction amount")
+    if total != 0 and any((a > 0) != (total > 0) for a in amounts):
+        raise ValueError(
+            f"every split must have the same sign as the transaction's amount "
+            f"({total}); got {[str(a) for a in amounts]} (mixed-sign splits "
+            "are refused). NOT sending."
+        )
     if sum(amounts) != total:
         raise ValueError(
             f"splits sum to {sum(amounts)} but the transaction's amount is "
@@ -192,7 +214,10 @@ async def split_transaction(
             "transaction: a debit/expense is negative). NOT sending."
         )
 
-    split_data = [_split_item(s, i, a) for i, (s, a) in enumerate(zip(splits, amounts))]
+    parent_hide = bool(txn.get("hideFromReports") or False)
+    split_data = [
+        _split_item(s, i, a, parent_hide) for i, (s, a) in enumerate(zip(splits, amounts))
+    ]
     data = await _call(
         "Common_SplitTransactionMutation",
         {"input": {"transactionId": transaction_id, "splitData": split_data}},
@@ -330,6 +355,34 @@ def _existing_to_input(rule: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# Fields of a rule (as returned by Web_GetTransactionRules) that the update
+# input has no verified slot for. If any is set to a non-default value, an
+# update would silently widen/alter the rule, so update_transaction_rule
+# REFUSES. name -> predicate "is non-default". Every name here is selected by
+# Web_GetTransactionRules.graphql (criteriaOwnerUsers / criteriaBusinessEntities
+# / actionSetOwner / actionSetBusinessEntity nested objects are not needed:
+# the id/flag fields below carry the same information).
+UNCARRIED_RULE_FIELDS: dict[str, str] = {
+    "criteriaOwnerIsJoint": "truthy",
+    "criteriaOwnerUserIds": "nonempty",
+    "criteriaBusinessEntityIds": "nonempty",
+    "criteriaBusinessEntityIsUnassigned": "truthy",
+    "sendNotificationAction": "truthy",
+    "actionSetOwner": "nonempty",
+    "actionSetOwnerIsJoint": "truthy",
+    "actionSetBusinessEntity": "nonempty",
+    "actionSetBusinessEntityIsUnassigned": "truthy",
+    "setLinkToPaydownBudgetAction": "truthy",
+    "unassignNeedsReviewByUserAction": "truthy",
+}
+
+VALID_REVIEW_STATUSES = {"needs_review", "reviewed"}
+
+
+def _uncarried_fields_set(rule: dict[str, Any]) -> list[str]:
+    return [k for k in UNCARRIED_RULE_FIELDS if rule.get(k)]
+
+
 def _merge(current: Any, new: Any) -> Any:
     """None = keep current; empty ([], "", {}) = clear to None; else replace."""
     if new is None:
@@ -361,21 +414,53 @@ async def update_transaction_rule(
     reads the current rule first and merges: an argument left as None KEEPS
     the rule's current value; an empty value ([] / "" / {}) CLEARS that
     field; anything else replaces it. set_hide_from_reports takes a bool
-    (False is a real value, not 'clear'). review_status e.g. "needs_review".
+    (False is a real value, not 'clear'). review_status must be "needs_review" or
+    "reviewed" ("" clears; anything else raises).
     split_action = {splits: [{percent, category_id?, merchant_name?,
     hide_from_reports?}, ...]} with percents summing to exactly 100 (only
     percentage splits are supported -- see _build_split_action). set_merchant_name is gated by the
     same exact-existing-merchant check as create_transaction_rule (skipped
-    when unchanged). Not carried over because the update input has no slot
-    for them: criteria-owner / business-entity criteria, owner and
-    send-notification actions (they reset to defaults on update)."""
+    when unchanged). Fails closed: if the existing rule sets any of
+    UNCARRIED_RULE_FIELDS (owner / business-entity criteria, owner and
+    business-entity actions, send-notification, paydown-budget link,
+    unassign-needs-review) the update is REFUSED, since the update input has
+    no verified slot for them and sending would reset them. A call with no
+    arguments besides rule_id is also refused."""
     _require_writes("update_transaction_rule")
+    if review_status is not None and review_status != "" and (
+        review_status not in VALID_REVIEW_STATUSES
+    ):
+        raise ValueError(
+            f"review_status={review_status!r} must be one of "
+            f"{sorted(VALID_REVIEW_STATUSES)} (or '' to clear); other strings "
+            "are stored unvalidated and can break get_transaction_rules"
+        )
+    if all(
+        v is None
+        for v in (
+            merchant_name_criteria, original_statement_criteria, amount_criteria,
+            category_ids, account_ids, set_category_action, set_merchant_name,
+            add_tag_ids, set_hide_from_reports, review_status,
+            needs_review_by_user_id, link_goal_id, link_savings_goal_id,
+            split_action,
+        )
+    ):
+        raise ValueError("no fields to update: pass at least one argument besides rule_id")
     rules = (await reads.get_transaction_rules()).get("transactionRules") or []
     rule = next((r for r in rules if r.get("id") == rule_id), None)
     if rule is None:
         raise ValueError(
             f"rule_id={rule_id!r} wasn't found in get_transaction_rules() -- "
             "double-check the id."
+        )
+    blocked = _uncarried_fields_set(rule)
+    if blocked:
+        raise ValueError(
+            f"rule {rule_id!r} uses fields update_transaction_rule cannot "
+            f"preserve ({', '.join(blocked)}): the update mutation would reset "
+            "them and silently widen the rule (e.g. from one household member "
+            "or business entity to everything). Refusing; edit this rule in "
+            "the Monarch web app instead. NOT sending."
         )
     current = _existing_to_input(rule)
 

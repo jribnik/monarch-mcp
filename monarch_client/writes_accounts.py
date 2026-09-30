@@ -20,11 +20,11 @@ PROVENANCE entry's note.
 
 from __future__ import annotations
 
-import hashlib
+import datetime
+import math
 import re
 from typing import Any, Optional
 
-from . import operations
 from .writes import _call, _require_writes
 
 TOOLS = [
@@ -45,15 +45,34 @@ _DEFAULT_GOAL_IMAGE = (
 )
 
 
-def _sha(op: str) -> str:
-    # Same computation as the loader: header stripped, then sha256.
-    return hashlib.sha256(operations.load(op).encode()).hexdigest()
+# Hard-coded (header-stripped sha256, as the loader computes it) so that
+# operations.verify_integrity really fails if a .graphql file is edited.
+_SHA = {
+    "Common_GetAccountForEdit":
+        "dc14403dea77c1c1d1dc5e7180f11526dc918b054c3ba9846ee7a652ae102cb4",
+    "Common_UpdateAccount":
+        "bba58f5cee6dea75b673f8f15b915454c7536a2af0b192b7193c3cff0231b0d4",
+    "Common_DeleteAccount":
+        "dbc487af865c9d427cc1e2cc1bb7fe234fa8d8179cbff4d392acc8af6a2f5ebf",
+    "Common_UpdateBudgetItem":
+        "24250795e95448331b4f45ed7ff7aef6da29bdeb0fe429ac019bdb37512a601d",
+    "Common_UpdateFlexBudgetMutation":
+        "0fa3626a1a78083f52d9fbe9ad2440a2bd6bb7f179d1b5446c30fd8a50182028",
+    "Common_CreateSavingsGoals":
+        "6b19da6615d3f486b439434226d2ef3459bc45ac7aa0c9bf00add2a04c5ae31c",
+    "Common_UpdateSavingsGoal":
+        "3c92cd2e8016db93f2ba27ac2e4961433eb059dbc4e330d502cb21682ac1ac99",
+    "Common_SetSavingsGoalBudgetAmount":
+        "15baaed4f385bdaa4ff6fc431c4779a6a94f1a1c774357936dea8d3e88f646b5",
+    "Common_DeleteSavingsGoal":
+        "ad75059ea6a0bf7c709d486133940926e83f3d846d022d5cb13dcd189e294760",
+}
 
 
 def _prov(op: str, note: str) -> dict:
     return {
         "catalog_query_hash": None,
-        "vendored_sha256": _sha(op),
+        "vendored_sha256": _SHA[op],
         "exported_at": "2026-09-30T00:00:00+00:00",
         "runs_seen": [],
         "hand_repaired": False,
@@ -159,6 +178,16 @@ def delete_savings_goal_result(data: dict[str, Any]) -> dict[str, Any]:
 
 # --- helpers --------------------------------------------------------------
 
+def _valid_date(d: Any) -> bool:
+    if not isinstance(d, str) or not _DATE_RE.match(d):
+        return False
+    try:
+        datetime.date.fromisoformat(d)
+    except ValueError:
+        return False
+    return True
+
+
 def _check_month(month: str) -> None:
     if not isinstance(month, str) or not _MONTH_RE.match(month):
         raise ValueError(
@@ -167,8 +196,19 @@ def _check_month(month: str) -> None:
 
 
 def _check_amount(amount: Any) -> None:
-    if isinstance(amount, bool) or not isinstance(amount, (int, float)) or amount < 0:
-        raise ValueError(f"amount={amount!r} must be a non-negative number.")
+    if (
+        isinstance(amount, bool)
+        or not isinstance(amount, (int, float))
+        or not math.isfinite(amount)
+        or amount < 0
+    ):
+        raise ValueError(f"amount={amount!r} must be a finite, non-negative number.")
+
+
+def _check_money(value: Any, label: str) -> None:
+    """Finite number (negative allowed, e.g. a debt balance); rejects NaN/inf/bool."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ValueError(f"{label}={value!r} must be a finite number.")
 
 
 async def _get_account_for_edit(account_id: str) -> dict[str, Any]:
@@ -182,10 +222,15 @@ async def _get_account_for_edit(account_id: str) -> dict[str, Any]:
 
 
 def _require_manual(account: dict[str, Any], tool: str) -> None:
-    if account.get("credential") is not None or not account.get("isManual", True):
+    # Fail closed: refuse unless it is positively identified as manual.
+    if (
+        account.get("isManual") is not True
+        or account.get("credential") is not None
+        or account.get("dataProvider")
+    ):
         raise ValueError(
             f"{tool}: account {account.get('id')!r} ({account.get('displayName')!r}) "
-            "is bank-linked (it has a credential), not manual. Only MANUAL "
+            "is not positively identified as a manual account (bank-linked, or missing/false isManual). Only MANUAL "
             "accounts can be changed or deleted through this server."
         )
 
@@ -225,6 +270,10 @@ async def update_account(
         )
     if name is not None and not name.strip():
         raise ValueError("update_account: name must not be empty.")
+    if display_balance is not None:
+        _check_money(display_balance, "display_balance")
+    if interest_rate is not None:
+        _check_money(interest_rate, "interest_rate")
 
     cur = await _get_account_for_edit(account_id)
     _require_manual(cur, "update_account")
@@ -362,8 +411,10 @@ async def create_savings_goal(
     _require_writes("create_savings_goal")
     if not name or not name.strip():
         raise ValueError("create_savings_goal: name must not be empty.")
-    if target_date is not None and not _DATE_RE.match(target_date):
+    if target_date is not None and not _valid_date(target_date):
         raise ValueError("create_savings_goal: target_date must be 'YYYY-MM-DD'.")
+    if target_amount is not None:
+        _check_amount(target_amount)  # validate BEFORE creating, never orphan a goal
     data = await _call(
         "Common_CreateSavingsGoals",
         {
@@ -405,7 +456,7 @@ async def update_savings_goal(
         raise ValueError("update_savings_goal: nothing to change.")
     if target_amount is not None:
         _check_amount(target_amount)
-    if target_date is not None and not _DATE_RE.match(target_date):
+    if target_date is not None and not _valid_date(target_date):
         raise ValueError("update_savings_goal: target_date must be 'YYYY-MM-DD'.")
     input_: dict[str, Any] = {"id": goal_id}
     if name is not None:

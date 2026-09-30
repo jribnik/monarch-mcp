@@ -13,7 +13,16 @@ import typing
 
 import pytest
 
-from monarch_client import doctor, errors, operations, reads, writes
+from monarch_client import (
+    doctor,
+    errors,
+    operations,
+    reads,
+    writes,
+    writes_accounts,
+    writes_categories,
+    writes_splits_rules,
+)
 
 # Public coroutine functions in writes.py that are deliberately NOT gated:
 # preview_transaction_rule is a dry-run (a query that sends nothing that
@@ -65,11 +74,26 @@ def _dummy_args(fn) -> dict:
             out[pname] = 1.0
         elif t is bool:
             out[pname] = False
-        elif typing.get_origin(t) is list:
+        elif typing.get_origin(t) is list or t is list:
             out[pname] = ["x"]
+        elif typing.get_origin(t) is dict or t is dict:
+            out[pname] = {}
+        elif t is int:
+            out[pname] = 1
         else:
             out[pname] = "x"
     return out
+
+
+EXTRA_MODULES = [writes_categories, writes_accounts, writes_splits_rules]
+
+
+def _module_write_functions(mod) -> dict[str, typing.Callable]:
+    return {
+        name: fn
+        for name, fn in inspect.getmembers(mod, inspect.iscoroutinefunction)
+        if not name.startswith("_") and fn.__module__ == mod.__name__
+    }
 
 
 @pytest.fixture
@@ -279,3 +303,24 @@ def test_doctor_reports_gate_state(monkeypatch, capsys):
     monkeypatch.setenv(writes.WRITES_ENV, "1")
     doctor._print_write_gate()
     assert "OPEN" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("mod", EXTRA_MODULES, ids=lambda m: m.__name__)
+def test_module_tools_equals_introspected_public_async_functions(mod):
+    assert set(mod.TOOLS) == set(_module_write_functions(mod)), mod.__name__
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mod", EXTRA_MODULES, ids=lambda m: m.__name__)
+async def test_extra_modules_refuse_every_write_when_gate_closed(
+    monkeypatch, fake_client, mod
+):
+    monkeypatch.delenv(writes.WRITES_ENV, raising=False)
+    fns = _module_write_functions(mod)
+    assert fns, mod.__name__
+    for name, fn in sorted(fns.items()):
+        with pytest.raises(errors.MonarchWriteBlocked) as exc:
+            await fn(**_dummy_args(fn))
+        assert exc.value.gate == "enabled", name
+        assert name in str(exc.value), name
+    assert fake_client.calls == [], "a refused write must not reach the network"

@@ -56,6 +56,22 @@ def _prov(sha: str, note: str) -> dict[str, Any]:
     }
 
 
+def _prov_hw(op: str, note: str) -> dict[str, Any]:
+    import hashlib
+
+    from . import operations
+
+    return {
+        "catalog_query_hash": None,
+        "vendored_sha256": hashlib.sha256(operations.load(op).encode()).hexdigest(),
+        "exported_at": "2026-09-30T00:00:00+00:00",
+        "runs_seen": [],
+        "hand_repaired": False,
+        "walk_reachable": False,
+        "note": note,
+    }
+
+
 PROVENANCE_ENTRIES: dict[str, dict] = {
     "Common_CreateCategoryGroup": _prov(
         "8c76e2a174dc9ebf39b82b81909f63ec6e2530347c8015ced77de9fc6fd86c07",
@@ -91,6 +107,17 @@ PROVENANCE_ENTRIES: dict[str, dict] = {
         "c2ca4041faf3004c8de83aefcc2eda95db0113f85cb3d0c1293ba275a00a0774",
         "backs update_merchant. Renaming a merchant to an EXISTING merchant's "
         "name MERGES them (same as rename-by-rule behaviour noted in writes.py)",
+    ),
+    "Common_GetMerchantForEdit": _prov_hw(
+        "Common_GetMerchantForEdit",
+        "backs update_merchant's read-before-write merge. HAND-WRITTEN read-only "
+        "query (field selection copied from the captured Common_UpdateMerchant "
+        "response; root field merchant(id: ID!)); verified live on monarch-sandbox",
+    ),
+    "Common_SearchMerchantsByName": _prov_hw(
+        "Common_SearchMerchantsByName",
+        "backs update_merchant's rename-merge guard. HAND-WRITTEN read-only "
+        "query merchants(search, limit, offset); verified live on monarch-sandbox",
     ),
 }
 
@@ -229,8 +256,8 @@ async def delete_category_group(
     group_id: str, move_to_group_id: Optional[str] = None
 ) -> dict[str, Any]:
     """Delete a category group. If it still contains categories, pass
-    move_to_group_id to re-home them; otherwise the server decides (see the
-    live-verification notes). Verified live against monarch-sandbox."""
+    move_to_group_id to re-home them; otherwise the server refuses a
+    non-empty group ("Category group is not empty"). Verified live against monarch-sandbox."""
     _require_writes("delete_category_group")
     variables: dict[str, Any] = {"id": group_id}
     if move_to_group_id is not None:
@@ -319,13 +346,27 @@ async def update_category(
 
 
 async def delete_category(
-    category_id: str, move_to_category_id: Optional[str] = None
+    category_id: str,
+    move_to_category_id: Optional[str] = None,
+    uncategorize_transactions: bool = False,
 ) -> dict[str, Any]:
     """Delete a category. Transactions in it are reassigned to
-    move_to_category_id when given. Destructive: if omitted, the server
-    decides what happens to existing transactions (see live notes).
-    Verified live against monarch-sandbox."""
+    move_to_category_id. Deleting WITHOUT a move target un-categorizes every
+    transaction in the category, so that must be requested explicitly with
+    uncategorize_transactions=True -- with neither argument a ValueError is
+    raised before anything is sent. Verified live against monarch-sandbox."""
     _require_writes("delete_category")
+    if move_to_category_id is None and not uncategorize_transactions:
+        raise ValueError(
+            "delete_category: pass move_to_category_id to reassign this "
+            "category's transactions, or uncategorize_transactions=True to "
+            "knowingly leave them uncategorized"
+        )
+    if move_to_category_id is not None and uncategorize_transactions:
+        raise ValueError(
+            "delete_category: pass move_to_category_id OR "
+            "uncategorize_transactions=True, not both"
+        )
     variables: dict[str, Any] = {"id": category_id}
     if move_to_category_id is not None:
         variables["moveToCategoryId"] = move_to_category_id
@@ -353,59 +394,153 @@ async def update_tag(
     return tag_result(data)
 
 
+_MERCHANT_SEARCH_LIMIT = 100
+
+
+async def _get_merchant(merchant_id: str) -> dict[str, Any]:
+    data = await _call("Common_GetMerchantForEdit", {"id": merchant_id})
+    merchant = data.get("merchant")
+    if not merchant:
+        raise ValueError(
+            f"update_merchant: merchant_id={merchant_id!r} wasn't found -- "
+            "double-check the id."
+        )
+    return merchant
+
+
+def _norm_name(name: Optional[str]) -> str:
+    return (name or "").strip().casefold()
+
+
+async def _verify_no_other_merchant_named(merchant_id: str, name: str) -> None:
+    """Inverse of writes._verify_merchant_name_exists: renaming a merchant to
+    ANOTHER merchant's name MERGES them irreversibly, so refuse unless no
+    other merchant id already has this name (compared case-insensitively,
+    whitespace-trimmed, to over-block rather than under-block). Fails closed
+    when the (substring) search hit its page limit: we can't see every
+    candidate, so we can't prove the name is free."""
+    data = await _call(
+        "Common_SearchMerchantsByName",
+        {"search": name.strip(), "limit": _MERCHANT_SEARCH_LIMIT, "offset": 0},
+    )
+    results = data.get("merchants") or []
+    target = _norm_name(name)
+    clash = [
+        m for m in results
+        if str(m.get("id")) != str(merchant_id) and _norm_name(m.get("name")) == target
+    ]
+    if clash:
+        c = clash[0]
+        raise ValueError(
+            f"update_merchant: renaming to {name!r} would MERGE this merchant "
+            f"into the existing merchant {c.get('name')!r} (id {c.get('id')}, "
+            f"{c.get('transactionCount')} transactions). Merging is "
+            "irreversible through this server. Pass allow_merge=True if that "
+            "is what you intend."
+        )
+    if len(results) >= _MERCHANT_SEARCH_LIMIT:
+        raise ValueError(
+            f"update_merchant: the merchant search for {name!r} returned "
+            f"{len(results)} results (the page limit), so this check can't "
+            "prove no other merchant already has that name -- NOT proceeding "
+            "(a rename onto an existing merchant merges irreversibly). Use a "
+            "more specific name, or pass allow_merge=True if you accept the "
+            "risk."
+        )
+
+
 async def update_merchant(
     merchant_id: str,
-    name: str,
+    name: Optional[str] = None,
     default_category_id: Optional[str] = None,
-    default_category_application_mode: str = "new_and_edits",
-    is_recurring: bool = False,
-    recurring_amount: float = 0,
-    recurring_is_active: bool = True,
+    clear_default_category: bool = False,
+    default_category_application_mode: Optional[str] = None,
+    is_recurring: Optional[bool] = None,
+    recurring_amount: Optional[float] = None,
+    recurring_is_active: Optional[bool] = None,
     recurring_frequency: Optional[str] = None,
     recurring_base_date: Optional[str] = None,
+    allow_merge: bool = False,
 ) -> dict[str, Any]:
     """Update a merchant: name, default category, and recurrence.
 
-    WARNING -- renaming == merging: setting `name` to the name of ANOTHER
-    existing merchant MERGES this merchant into that one (its transactions
-    move over, this merchant id ceases to exist). This is irreversible
-    through this server (renaming back does not un-merge). Only pass a name
-    you know is unique, or one you intend to merge into. Empty/blank names
-    are refused client-side.
+    The mutation takes the whole object (the UI always sends everything), so
+    this reads the merchant FIRST and merges: every argument left at None
+    KEEPS the merchant's current value (name, default category, application
+    mode, and its recurring stream). default_category_id=None therefore means
+    "keep"; to actively remove the default category pass
+    clear_default_category=True. To switch recurrence off pass
+    is_recurring=False. When turning recurrence ON for a merchant with no
+    stream, recurring_frequency (e.g. 'monthly') and recurring_base_date (ISO
+    date) are REQUIRED; with an existing stream any you omit are kept.
 
-    The captured UI always sends the whole object, so name and recurrence
-    are always sent. To leave a merchant non-recurring pass
-    is_recurring=False (recurrence {isRecurring:false, amount:0,
-    isActive:true}). When is_recurring=True, recurring_frequency (e.g.
-    'monthly', 'weekly') and recurring_base_date (ISO date of a typical
-    occurrence) are REQUIRED client-side. default_category_id=None clears
-    nothing special -- it is sent as null exactly as the UI does.
-    default_category_application_mode: 'new_and_edits' (as captured).
-    Verified live against monarch-sandbox."""
+    WARNING -- renaming == merging: setting `name` to the name of ANOTHER
+    existing merchant MERGES this merchant into that one (irreversible). A
+    rename is therefore refused client-side if any other merchant already has
+    that name (or if that can't be ruled out) unless allow_merge=True.
+    Empty/blank names are refused. Verified live against monarch-sandbox."""
     _require_writes("update_merchant")
-    if not name or not name.strip():
+    if name is not None and not name.strip():
         raise ValueError("update_merchant: name must not be empty")
-    recurrence: dict[str, Any] = {
-        "isRecurring": is_recurring,
-        "amount": recurring_amount,
-        "isActive": recurring_is_active,
-    }
-    if is_recurring:
-        if not recurring_frequency or not recurring_base_date:
+    if clear_default_category and default_category_id is not None:
+        raise ValueError(
+            "update_merchant: pass default_category_id OR "
+            "clear_default_category=True, not both"
+        )
+    cur = await _get_merchant(merchant_id)
+    new_name = name if name is not None else cur.get("name")
+    if name is not None and not allow_merge and name != cur.get("name"):
+        await _verify_no_other_merchant_named(merchant_id, name)
+
+    if clear_default_category:
+        cat_id = None
+    elif default_category_id is not None:
+        cat_id = default_category_id
+    else:
+        cat_id = (cur.get("defaultCategory") or {}).get("id")
+
+    stream = cur.get("recurringTransactionStream")
+    want_recurring = is_recurring if is_recurring is not None else bool(stream)
+    if want_recurring:
+        s = stream or {}
+        freq = recurring_frequency or s.get("frequency")
+        base = recurring_base_date or s.get("baseDate")
+        if not freq or not base:
             raise ValueError(
                 "update_merchant: is_recurring=True requires recurring_frequency "
-                "and recurring_base_date"
+                "and recurring_base_date (this merchant has no existing stream "
+                "to inherit them from)"
             )
-        recurrence["frequency"] = recurring_frequency
-        recurrence["baseDate"] = recurring_base_date
+        amount = recurring_amount if recurring_amount is not None else s.get("amount")
+        active = (
+            recurring_is_active
+            if recurring_is_active is not None
+            else s.get("isActive", True)
+        )
+        recurrence: dict[str, Any] = {
+            "isRecurring": True,
+            "amount": amount if amount is not None else 0,
+            "isActive": active,
+            "frequency": freq,
+            "baseDate": base,
+        }
+    else:
+        recurrence = {
+            "isRecurring": False,
+            "amount": recurring_amount if recurring_amount is not None else 0,
+            "isActive": recurring_is_active if recurring_is_active is not None else True,
+        }
+    mode = default_category_application_mode or cur.get(
+        "defaultCategoryApplicationMode"
+    ) or "new_and_edits"
     data = await _call(
         "Common_UpdateMerchant",
         {
             "input": {
                 "merchantId": merchant_id,
-                "name": name,
-                "defaultCategoryId": default_category_id,
-                "defaultCategoryApplicationMode": default_category_application_mode,
+                "name": new_name,
+                "defaultCategoryId": cat_id,
+                "defaultCategoryApplicationMode": mode,
                 "recurrence": recurrence,
             }
         },

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+from importlib import resources
 
 import pytest
 
@@ -174,28 +175,135 @@ async def test_update_tag(fake_client):
 
 
 _MERCH = {"updateMerchant": {"merchant": {"id": "m1", "name": "N"}, "errors": None}}
+_STREAM = {"id": "s1", "frequency": "monthly", "amount": -9.5,
+           "baseDate": "2026-10-03", "isActive": True}
+
+
+def _cur(category=None, stream=None, name="Old"):
+    return {"merchant": {"id": "m1", "name": name,
+                         "defaultCategoryApplicationMode": "new_only",
+                         "defaultCategory": category,
+                         "recurringTransactionStream": stream}}
+
+
+def _setup(fake_client, cur=None, others=None):
+    fake_client.responses["Common_GetMerchantForEdit"] = cur or _cur()
+    fake_client.responses["Common_SearchMerchantsByName"] = {"merchants": others or []}
+    fake_client.responses["Common_UpdateMerchant"] = _MERCH
+
+
+def _sent(fake_client):
+    ups = [v for n, v in fake_client.calls if n == "Common_UpdateMerchant"]
+    assert len(ups) == 1
+    return ups[0]["input"]
 
 
 @pytest.mark.asyncio
-async def test_update_merchant_non_recurring(fake_client):
-    fake_client.responses["Common_UpdateMerchant"] = _MERCH
-    r = await wc.update_merchant("m1", "N")
-    assert fake_client.calls == [("Common_UpdateMerchant", {"input": {
-        "merchantId": "m1", "name": "N", "defaultCategoryId": None,
-        "defaultCategoryApplicationMode": "new_and_edits",
-        "recurrence": {"isRecurring": False, "amount": 0, "isActive": True}}})]
+async def test_update_merchant_plain_rename_preserves_category_and_stream(fake_client):
+    _setup(fake_client, _cur({"id": "cat9", "name": "X"}, _STREAM))
+    r = await wc.update_merchant("m1", name="New")
+    assert _sent(fake_client) == {
+        "merchantId": "m1", "name": "New", "defaultCategoryId": "cat9",
+        "defaultCategoryApplicationMode": "new_only",
+        "recurrence": {"isRecurring": True, "amount": -9.5, "isActive": True,
+                       "frequency": "monthly", "baseDate": "2026-10-03"}}
     assert r["merchant"]["id"] == "m1"
 
 
 @pytest.mark.asyncio
-async def test_update_merchant_recurring(fake_client):
-    fake_client.responses["Common_UpdateMerchant"] = _MERCH
+async def test_update_merchant_no_category_no_stream_stays_empty(fake_client):
+    _setup(fake_client)
+    await wc.update_merchant("m1", default_category_id="c5")
+    i = _sent(fake_client)
+    assert i["name"] == "Old" and i["defaultCategoryId"] == "c5"
+    assert i["recurrence"] == {"isRecurring": False, "amount": 0, "isActive": True}
+    # no rename -> no merge-guard search
+    assert all(n != "Common_SearchMerchantsByName" for n, _ in fake_client.calls)
+
+
+@pytest.mark.asyncio
+async def test_update_merchant_clear_category_and_stop_recurring(fake_client):
+    _setup(fake_client, _cur({"id": "cat9", "name": "X"}, _STREAM))
+    await wc.update_merchant("m1", clear_default_category=True, is_recurring=False)
+    i = _sent(fake_client)
+    assert i["defaultCategoryId"] is None
+    assert i["recurrence"]["isRecurring"] is False
+
+
+@pytest.mark.asyncio
+async def test_update_merchant_partial_recurring_override_keeps_rest(fake_client):
+    _setup(fake_client, _cur(None, _STREAM))
+    await wc.update_merchant("m1", recurring_amount=-12)
+    assert _sent(fake_client)["recurrence"] == {
+        "isRecurring": True, "amount": -12, "isActive": True,
+        "frequency": "monthly", "baseDate": "2026-10-03"}
+
+
+@pytest.mark.asyncio
+async def test_update_merchant_new_recurring(fake_client):
+    _setup(fake_client)
     await wc.update_merchant(
-        "m1", "N", is_recurring=True, recurring_amount=-5,
+        "m1", is_recurring=True, recurring_amount=-5,
         recurring_frequency="monthly", recurring_base_date="2026-10-15")
-    assert fake_client.calls[0][1]["input"]["recurrence"] == {
+    assert _sent(fake_client)["recurrence"] == {
         "isRecurring": True, "amount": -5, "isActive": True,
         "frequency": "monthly", "baseDate": "2026-10-15"}
+
+
+@pytest.mark.asyncio
+async def test_update_merchant_rename_onto_existing_refused(fake_client):
+    _setup(fake_client, others=[
+        {"id": "m2", "name": "  new ", "transactionCount": 4},
+        {"id": "m1", "name": "New", "transactionCount": 1}])
+    with pytest.raises(ValueError, match="MERGE"):
+        await wc.update_merchant("m1", name="New")
+    assert all(n != "Common_UpdateMerchant" for n, _ in fake_client.calls)
+
+
+@pytest.mark.asyncio
+async def test_update_merchant_allow_merge_skips_guard(fake_client):
+    _setup(fake_client, others=[{"id": "m2", "name": "New", "transactionCount": 4}])
+    await wc.update_merchant("m1", name="New", allow_merge=True)
+    assert _sent(fake_client)["name"] == "New"
+    assert all(n != "Common_SearchMerchantsByName" for n, _ in fake_client.calls)
+
+
+@pytest.mark.asyncio
+async def test_update_merchant_unique_rename_allowed_and_self_ignored(fake_client):
+    _setup(fake_client, others=[{"id": "m3", "name": "New Wave", "transactionCount": 2}])
+    await wc.update_merchant("m1", name="New")
+    assert _sent(fake_client)["name"] == "New"
+
+
+@pytest.mark.asyncio
+async def test_update_merchant_truncated_search_fails_closed(fake_client):
+    _setup(fake_client, others=[
+        {"id": f"x{i}", "name": f"New{i}", "transactionCount": 1}
+        for i in range(wc._MERCHANT_SEARCH_LIMIT)])
+    with pytest.raises(ValueError, match="page limit"):
+        await wc.update_merchant("m1", name="New")
+    assert all(n != "Common_UpdateMerchant" for n, _ in fake_client.calls)
+
+
+@pytest.mark.asyncio
+async def test_update_merchant_unknown_id(fake_client):
+    fake_client.responses["Common_GetMerchantForEdit"] = {"merchant": None}
+    with pytest.raises(ValueError, match="wasn't found"):
+        await wc.update_merchant("nope", name="N")
+    assert [n for n, _ in fake_client.calls] == ["Common_GetMerchantForEdit"]
+
+
+@pytest.mark.asyncio
+async def test_delete_category_requires_target_or_explicit_uncategorize(fake_client):
+    with pytest.raises(ValueError, match="uncategorize_transactions"):
+        await wc.delete_category("c1")
+    with pytest.raises(ValueError, match="not both"):
+        await wc.delete_category("c1", "c2", uncategorize_transactions=True)
+    assert fake_client.calls == []
+    fake_client.responses["Web_DeleteCategory"] = {
+        "deleteCategory": {"deleted": True, "errors": None}}
+    await wc.delete_category("c1", uncategorize_transactions=True)
+    assert fake_client.calls == [("Web_DeleteCategory", {"id": "c1"})]
 
 
 @pytest.mark.asyncio
@@ -203,7 +311,7 @@ async def test_client_side_guards_send_nothing(fake_client):
     with pytest.raises(ValueError):
         await wc.update_merchant("m1", "  ")
     with pytest.raises(ValueError):
-        await wc.update_merchant("m1", "N", is_recurring=True)
+        await wc.update_merchant("m1", default_category_id="c", clear_default_category=True)
     with pytest.raises(ValueError):
         await wc.create_category_group("")
     with pytest.raises(ValueError):
@@ -211,6 +319,17 @@ async def test_client_side_guards_send_nothing(fake_client):
     with pytest.raises(ValueError):
         await wc.update_tag("t1", "", "#000000")
     assert fake_client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_update_merchant_recurring_needs_freq_when_no_stream(fake_client):
+    _setup(fake_client)
+    with pytest.raises(ValueError, match="requires recurring_frequency"):
+        await wc.update_merchant("m1", is_recurring=True)
+    assert all(n != "Common_UpdateMerchant" for n, _ in fake_client.calls)
+
+
+_READ_OPS = {"Common_GetMerchantForEdit", "Common_SearchMerchantsByName"}
 
 
 # ---- provenance ------------------------------------------------------------
@@ -221,7 +340,14 @@ def test_vendored_sha256_matches(op_name):
     assert hashlib.sha256(text.encode("utf-8")).hexdigest() == \
         wc.PROVENANCE_ENTRIES[op_name]["vendored_sha256"]
     assert "__recon_redacted__" not in text
-    assert operations.is_mutation(op_name)
+    if op_name in _READ_OPS:
+        assert not operations.is_mutation(op_name)
+        assert wc.PROVENANCE_ENTRIES[op_name]["walk_reachable"] is False
+        assert "HAND-WRITTEN" in wc.PROVENANCE_ENTRIES[op_name]["note"]
+        raw = (resources.files(operations.__package__) / f"{op_name}.graphql").read_text()
+        assert "HAND-WRITTEN" in raw
+    else:
+        assert operations.is_mutation(op_name)
 
 
 def test_provenance_entry_shape_matches_existing():

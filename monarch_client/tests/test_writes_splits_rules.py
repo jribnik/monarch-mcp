@@ -166,6 +166,18 @@ def _existing_rule(**over):
         "setHideFromReportsAction": False,
         "reviewStatusAction": "needs_review",
         "splitTransactionsAction": None,
+        # Fields update_transaction_rule cannot carry (default = unset).
+        "criteriaOwnerIsJoint": False,
+        "criteriaOwnerUserIds": None,
+        "criteriaBusinessEntityIds": None,
+        "criteriaBusinessEntityIsUnassigned": False,
+        "sendNotificationAction": False,
+        "actionSetOwner": None,
+        "actionSetOwnerIsJoint": False,
+        "actionSetBusinessEntity": None,
+        "actionSetBusinessEntityIsUnassigned": False,
+        "setLinkToPaydownBudgetAction": False,
+        "unassignNeedsReviewByUserAction": False,
     }
     rule.update(over)
     return rule
@@ -178,7 +190,7 @@ UPDATE_OK = {"updateTransactionRuleV2": {"errors": None}}
 async def test_update_rule_noop_roundtrips_existing_fields(fake):
     fake.responses["Web_GetTransactionRules"] = {"transactionRules": [_existing_rule()]}
     fake.responses["Common_UpdateTransactionRuleMutationV2"] = UPDATE_OK
-    await w.update_transaction_rule("r1")
+    await w.update_transaction_rule("r1", set_hide_from_reports=False)
     op, variables = fake.calls[-1]
     assert op == "Common_UpdateTransactionRuleMutationV2"
     inp = variables["input"]
@@ -257,7 +269,7 @@ async def test_update_rule_refuses_to_strip_all_actions_or_criteria(fake):
 async def test_update_rule_unknown_id(fake):
     fake.responses["Web_GetTransactionRules"] = {"transactionRules": [_existing_rule()]}
     with pytest.raises(ValueError, match="wasn't found"):
-        await w.update_transaction_rule("missing")
+        await w.update_transaction_rule("missing", set_hide_from_reports=True)
 
 
 @pytest.mark.asyncio
@@ -328,7 +340,7 @@ async def test_update_rule_empty_split_action_clears(fake):
     )
     fake.responses["Web_GetTransactionRules"] = {"transactionRules": [existing]}
     fake.responses["Common_UpdateTransactionRuleMutationV2"] = UPDATE_OK
-    await w.update_transaction_rule("r1")
+    await w.update_transaction_rule("r1", set_hide_from_reports=False)
     kept = fake.calls[-1][1]["input"]["splitTransactionsAction"]
     assert kept["amountType"] == "PERCENTAGE" and "__typename" not in kept["splitsInfo"][0]
     await w.update_transaction_rule("r1", split_action={})
@@ -361,3 +373,107 @@ def test_provenance_entries_match_vendored_files():
         assert entry["runs_seen"] == []
         assert operations.is_mutation(name)
     assert w.TOOLS == ["split_transaction", "unsplit_transaction", "update_transaction_rule"]
+
+
+# ----------------------------------------------------- review-fix additions
+
+_NON_DEFAULT = {
+    "criteriaOwnerIsJoint": True,
+    "criteriaOwnerUserIds": ["u1"],
+    "criteriaBusinessEntityIds": ["b1"],
+    "criteriaBusinessEntityIsUnassigned": True,
+    "sendNotificationAction": True,
+    "actionSetOwner": {"id": "u1", "displayName": "X"},
+    "actionSetOwnerIsJoint": True,
+    "actionSetBusinessEntity": {"id": "b1", "name": "Biz"},
+    "actionSetBusinessEntityIsUnassigned": True,
+    "setLinkToPaydownBudgetAction": True,
+    "unassignNeedsReviewByUserAction": True,
+}
+
+
+def test_uncarried_field_list_is_exactly_the_tested_set():
+    assert set(w.UNCARRIED_RULE_FIELDS) == set(_NON_DEFAULT)
+
+
+def test_uncarried_fields_exist_in_the_rules_query():
+    text = operations.load("Web_GetTransactionRules")
+    for name in w.UNCARRIED_RULE_FIELDS:
+        assert name in text, name
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", sorted(_NON_DEFAULT))
+async def test_update_rule_refuses_rule_using_uncarried_field(fake, field):
+    fake.responses["Web_GetTransactionRules"] = {
+        "transactionRules": [_existing_rule(**{field: _NON_DEFAULT[field]})]
+    }
+    with pytest.raises(ValueError, match=field):
+        await w.update_transaction_rule(
+            "r1", add_tag_ids=["t2"], apply_to_existing_transactions=True
+        )
+    assert all(op != "Common_UpdateTransactionRuleMutationV2" for op, _ in fake.calls)
+
+
+@pytest.mark.asyncio
+async def test_update_rule_default_uncarried_fields_allowed(fake):
+    fake.responses["Web_GetTransactionRules"] = {"transactionRules": [_existing_rule()]}
+    fake.responses["Common_UpdateTransactionRuleMutationV2"] = UPDATE_OK
+    await w.update_transaction_rule("r1", add_tag_ids=["t2"])
+    assert fake.calls[-1][0] == "Common_UpdateTransactionRuleMutationV2"
+
+
+@pytest.mark.asyncio
+async def test_update_rule_noop_refused(fake):
+    with pytest.raises(ValueError, match="no fields to update"):
+        await w.update_transaction_rule("r1")
+    assert fake.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["needs_review", "reviewed", ""])
+async def test_update_rule_review_status_allowed(fake, status):
+    fake.responses["Web_GetTransactionRules"] = {"transactionRules": [_existing_rule()]}
+    fake.responses["Common_UpdateTransactionRuleMutationV2"] = UPDATE_OK
+    await w.update_transaction_rule("r1", review_status=status)
+    assert fake.calls[-1][1]["input"]["reviewStatusAction"] == (status or "")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["bogus", "Reviewed", "NEEDS_REVIEW", " "])
+async def test_update_rule_review_status_rejected(fake, status):
+    with pytest.raises(ValueError, match="review_status"):
+        await w.update_transaction_rule("r1", review_status=status)
+    assert fake.calls == []
+
+
+@pytest.mark.asyncio
+async def test_split_zero_amount_refused(fake):
+    fake.responses["Web_GetTransactionDrawer"] = _txn(-5)
+    with pytest.raises(ValueError, match="zero"):
+        await w.split_transaction("t1", [{"amount": 0}, {"amount": -5}])
+    assert fake.calls == []
+
+
+@pytest.mark.asyncio
+async def test_split_mixed_sign_refused(fake):
+    # sums correctly (-8 + -4 + 7 = -5) but one split has the wrong sign
+    fake.responses["Web_GetTransactionDrawer"] = _txn(-5)
+    with pytest.raises(ValueError, match="same sign"):
+        await w.split_transaction(
+            "t1", [{"amount": -8}, {"amount": -4}, {"amount": 7}]
+        )
+    assert all(op != "Common_SplitTransactionMutation" for op, _ in fake.calls)
+
+
+@pytest.mark.asyncio
+async def test_split_hide_from_reports_defaults_to_parent(fake):
+    fake.responses["Web_GetTransactionDrawer"] = {
+        "getTransaction": {"id": "t1", "amount": -10, "hideFromReports": True}
+    }
+    fake.responses["Common_SplitTransactionMutation"] = SPLIT_OK
+    await w.split_transaction(
+        "t1", [{"amount": -6}, {"amount": -4, "hide_from_reports": False}]
+    )
+    items = fake.calls[-1][1]["input"]["splitData"]
+    assert [i["hideFromReports"] for i in items] == [True, False]

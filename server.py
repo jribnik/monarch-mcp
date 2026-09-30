@@ -484,13 +484,18 @@ async def update_category(
 
 @mcp.tool()
 async def delete_category(
-    category_id: str, move_to_category_id: Optional[str] = None
+    category_id: str,
+    move_to_category_id: Optional[str] = None,
+    uncategorize_transactions: bool = False,
 ) -> dict[str, Any]:
-    """Delete a category. Its transactions are reassigned to
-    move_to_category_id if given; otherwise they become 'Uncategorized'
-    (and budget history for the category is lost). Returns {deleted, errors}."""
+    """Delete a category. You must say what happens to its transactions: pass
+    move_to_category_id to reassign them, or uncategorize_transactions=True to
+    knowingly leave them Uncategorized (budget history for the category is
+    lost either way). With neither (or both) the call is refused before
+    anything is sent. Returns {deleted, errors}."""
     return await client_writes_categories.delete_category(
-        category_id, move_to_category_id)
+        category_id, move_to_category_id=move_to_category_id,
+        uncategorize_transactions=uncategorize_transactions)
 
 
 @mcp.tool()
@@ -504,26 +509,37 @@ async def update_tag(tag_id: str, name: str, color: str) -> dict[str, Any]:
 @mcp.tool()
 async def update_merchant(
     merchant_id: str,
-    name: str,
+    name: Optional[str] = None,
     default_category_id: Optional[str] = None,
-    default_category_application_mode: str = "new_and_edits",
-    is_recurring: bool = False,
-    recurring_amount: float = 0,
-    recurring_is_active: bool = True,
+    clear_default_category: bool = False,
+    default_category_application_mode: Optional[str] = None,
+    is_recurring: Optional[bool] = None,
+    recurring_amount: Optional[float] = None,
+    recurring_is_active: Optional[bool] = None,
     recurring_frequency: Optional[str] = None,
     recurring_base_date: Optional[str] = None,
+    allow_merge: bool = False,
 ) -> dict[str, Any]:
     """Update a merchant's name, default category, and recurring-stream
-    settings. WARNING: setting name to another EXISTING merchant's name MERGES
-    the two (irreversible here). The full object is always sent, so pass the
-    merchant's current name when only changing recurrence, and
-    default_category_id=None leaves no default. For is_recurring=True you must
-    give recurring_frequency (e.g. 'monthly') and recurring_base_date
-    (ISO date); recurring_amount is negative for expenses."""
+    settings. The merchant is read first and any argument left unset KEEPS its
+    current value (so a plain rename preserves the default category and
+    recurring stream). To remove the default category pass
+    clear_default_category=True; to stop recurrence pass is_recurring=False.
+    Turning recurrence on for a merchant with no stream needs
+    recurring_frequency (e.g. 'monthly') and recurring_base_date (ISO date);
+    recurring_amount is negative for expenses. WARNING: renaming to another
+    EXISTING merchant's name MERGES the two (irreversible here), so such a
+    rename is refused unless allow_merge=True (also refused if the name check
+    can't be completed)."""
     return await client_writes_categories.update_merchant(
-        merchant_id, name, default_category_id,
-        default_category_application_mode, is_recurring, recurring_amount,
-        recurring_is_active, recurring_frequency, recurring_base_date)
+        merchant_id, name=name, default_category_id=default_category_id,
+        clear_default_category=clear_default_category,
+        default_category_application_mode=default_category_application_mode,
+        is_recurring=is_recurring, recurring_amount=recurring_amount,
+        recurring_is_active=recurring_is_active,
+        recurring_frequency=recurring_frequency,
+        recurring_base_date=recurring_base_date, allow_merge=allow_merge)
+
 
 @mcp.tool()
 async def update_account(
@@ -609,7 +625,7 @@ async def delete_savings_goal(goal_id: str) -> dict:
     return await client_writes_accounts.delete_savings_goal(goal_id)
 
 @mcp.tool()
-async def split_transaction(transaction_id: str, splits: list[dict]) -> str:
+async def split_transaction(transaction_id: str, splits: list[dict]) -> dict[str, Any]:
     """Split a transaction into 2+ parts (WRITE). Each split is
     {amount, category_id?, merchant_name?, hide_from_reports?}. Amounts are
     signed like the transaction (an expense is NEGATIVE) and must sum EXACTLY,
@@ -621,7 +637,7 @@ async def split_transaction(transaction_id: str, splits: list[dict]) -> str:
 
 
 @mcp.tool()
-async def unsplit_transaction(transaction_id: str) -> str:
+async def unsplit_transaction(transaction_id: str) -> dict[str, Any]:
     """Remove a transaction's split, restoring a single transaction (WRITE)."""
     return await client_writes_splits_rules.unsplit_transaction(transaction_id)
 
@@ -644,7 +660,7 @@ async def update_transaction_rule(
     link_savings_goal_id: str | None = None,
     split_action: dict | None = None,
     apply_to_existing_transactions: bool = False,
-) -> str:
+) -> dict[str, Any]:
     """Update an existing transaction rule (WRITE). Same criteria/actions as
     create_transaction_rule plus add_tag_ids, set_hide_from_reports,
     review_status ("needs_review" / "reviewed"), needs_review_by_user_id,
