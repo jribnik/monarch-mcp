@@ -6,6 +6,8 @@ import hashlib
 import inspect
 from importlib import resources
 
+import json
+
 import pytest
 
 from monarch_client import errors, operations, writes, writes_categories as wc
@@ -255,17 +257,9 @@ async def test_update_merchant_rename_onto_existing_refused(fake_client):
     _setup(fake_client, others=[
         {"id": "m2", "name": "  new ", "transactionCount": 4},
         {"id": "m1", "name": "New", "transactionCount": 1}])
-    with pytest.raises(ValueError, match="MERGE"):
+    with pytest.raises(ValueError, match="already exists"):
         await wc.update_merchant("m1", name="New")
     assert all(n != "Common_UpdateMerchant" for n, _ in fake_client.calls)
-
-
-@pytest.mark.asyncio
-async def test_update_merchant_allow_merge_skips_guard(fake_client):
-    _setup(fake_client, others=[{"id": "m2", "name": "New", "transactionCount": 4}])
-    await wc.update_merchant("m1", name="New", allow_merge=True)
-    assert _sent(fake_client)["name"] == "New"
-    assert all(n != "Common_SearchMerchantsByName" for n, _ in fake_client.calls)
 
 
 @pytest.mark.asyncio
@@ -276,13 +270,28 @@ async def test_update_merchant_unique_rename_allowed_and_self_ignored(fake_clien
 
 
 @pytest.mark.asyncio
-async def test_update_merchant_truncated_search_fails_closed(fake_client):
+async def test_update_merchant_truncated_search_proceeds_server_decides(fake_client):
+    # A full page with no exact-name clash: the pre-check is best-effort, so the
+    # rename is sent and Monarch (authoritative) accepts/rejects it.
     _setup(fake_client, others=[
         {"id": f"x{i}", "name": f"New{i}", "transactionCount": 1}
         for i in range(wc._MERCHANT_SEARCH_LIMIT)])
-    with pytest.raises(ValueError, match="page limit"):
-        await wc.update_merchant("m1", name="New")
-    assert all(n != "Common_UpdateMerchant" for n, _ in fake_client.calls)
+    await wc.update_merchant("m1", name="New")
+    assert _sent(fake_client)["name"] == "New"
+
+
+@pytest.mark.asyncio
+async def test_update_merchant_server_duplicate_name_error_is_surfaced(fake_client):
+    # Verified live 2026-09-30: Monarch rejects a rename onto an existing name
+    # with a fieldError (merchant null). It must come back as an error payload.
+    _setup(fake_client)
+    fake_client.responses["Common_UpdateMerchant"] = {"updateMerchant": {
+        "merchant": None,
+        "errors": {"fieldErrors": [{"field": "name", "messages": [
+            "A merchant with this name already exists"]}], "message": None, "code": None}}}
+    out = await wc.update_merchant("m1", name="Taken")
+    assert out["errors"] is not None
+    assert "already exists" in json.dumps(out["errors"])
 
 
 @pytest.mark.asyncio
