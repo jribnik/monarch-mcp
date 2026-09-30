@@ -518,7 +518,6 @@ async def update_merchant(
     recurring_is_active: Optional[bool] = None,
     recurring_frequency: Optional[str] = None,
     recurring_base_date: Optional[str] = None,
-    allow_merge: bool = False,
 ) -> dict[str, Any]:
     """Update a merchant's name, default category, and recurring-stream
     settings. The merchant is read first and any argument left unset KEEPS its
@@ -527,10 +526,9 @@ async def update_merchant(
     clear_default_category=True; to stop recurrence pass is_recurring=False.
     Turning recurrence on for a merchant with no stream needs
     recurring_frequency (e.g. 'monthly') and recurring_base_date (ISO date);
-    recurring_amount is negative for expenses. WARNING: renaming to another
-    EXISTING merchant's name MERGES the two (irreversible here), so such a
-    rename is refused unless allow_merge=True (also refused if the name check
-    can't be completed)."""
+    recurring_amount is negative for expenses. Renaming onto another EXISTING
+    merchant's name is rejected by Monarch (this cannot merge merchants); to
+    merge, rename the transactions with update_transaction."""
     return await client_writes_categories.update_merchant(
         merchant_id, name=name, default_category_id=default_category_id,
         clear_default_category=clear_default_category,
@@ -538,7 +536,7 @@ async def update_merchant(
         is_recurring=is_recurring, recurring_amount=recurring_amount,
         recurring_is_active=recurring_is_active,
         recurring_frequency=recurring_frequency,
-        recurring_base_date=recurring_base_date, allow_merge=allow_merge)
+        recurring_base_date=recurring_base_date)
 
 
 @mcp.tool()

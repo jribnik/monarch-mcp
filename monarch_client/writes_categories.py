@@ -105,8 +105,10 @@ PROVENANCE_ENTRIES: dict[str, dict] = {
     ),
     "Common_UpdateMerchant": _prov(
         "c2ca4041faf3004c8de83aefcc2eda95db0113f85cb3d0c1293ba275a00a0774",
-        "backs update_merchant. Renaming a merchant to an EXISTING merchant's "
-        "name MERGES them (same as rename-by-rule behaviour noted in writes.py)",
+        "backs update_merchant. Monarch REJECTS renaming a merchant onto an "
+        "EXISTING merchant's name (fieldError 'A merchant with this name "
+        "already exists', verified live 2026-09-30) -- unlike update_transaction's "
+        "merchant rename, which merges",
     ),
     "Common_GetMerchantForEdit": _prov_hw(
         "Common_GetMerchantForEdit",
@@ -116,7 +118,7 @@ PROVENANCE_ENTRIES: dict[str, dict] = {
     ),
     "Common_SearchMerchantsByName": _prov_hw(
         "Common_SearchMerchantsByName",
-        "backs update_merchant's rename-merge guard. HAND-WRITTEN read-only "
+        "backs update_merchant's duplicate-name pre-check. HAND-WRITTEN read-only "
         "query merchants(search, limit, offset); verified live on monarch-sandbox",
     ),
 }
@@ -413,12 +415,14 @@ def _norm_name(name: Optional[str]) -> str:
 
 
 async def _verify_no_other_merchant_named(merchant_id: str, name: str) -> None:
-    """Inverse of writes._verify_merchant_name_exists: renaming a merchant to
-    ANOTHER merchant's name MERGES them irreversibly, so refuse unless no
-    other merchant id already has this name (compared case-insensitively,
-    whitespace-trimmed, to over-block rather than under-block). Fails closed
-    when the (substring) search hit its page limit: we can't see every
-    candidate, so we can't prove the name is free."""
+    """Fast-fail pre-check: Monarch itself REJECTS renaming a merchant onto
+    another merchant's exact name (fieldError "A merchant with this name
+    already exists", verified live 2026-09-30 -- update_merchant can never
+    merge; merging happens only via update_transaction's merchant rename).
+    This just turns that opaque server error into a clear one, comparing
+    case-insensitively and whitespace-trimmed. Best-effort only: if the
+    (substring) search hit its page limit and shows no clash we proceed and
+    let the server decide, since it is authoritative."""
     data = await _call(
         "Common_SearchMerchantsByName",
         {"search": name.strip(), "limit": _MERCHANT_SEARCH_LIMIT, "offset": 0},
@@ -432,20 +436,12 @@ async def _verify_no_other_merchant_named(merchant_id: str, name: str) -> None:
     if clash:
         c = clash[0]
         raise ValueError(
-            f"update_merchant: renaming to {name!r} would MERGE this merchant "
-            f"into the existing merchant {c.get('name')!r} (id {c.get('id')}, "
-            f"{c.get('transactionCount')} transactions). Merging is "
-            "irreversible through this server. Pass allow_merge=True if that "
-            "is what you intend."
-        )
-    if len(results) >= _MERCHANT_SEARCH_LIMIT:
-        raise ValueError(
-            f"update_merchant: the merchant search for {name!r} returned "
-            f"{len(results)} results (the page limit), so this check can't "
-            "prove no other merchant already has that name -- NOT proceeding "
-            "(a rename onto an existing merchant merges irreversibly). Use a "
-            "more specific name, or pass allow_merge=True if you accept the "
-            "risk."
+            f"update_merchant: a merchant named {c.get('name')!r} already exists "
+            f"(id {c.get('id')}, {c.get('transactionCount')} transactions) and "
+            "Monarch rejects renaming onto an existing name (case-insensitive, "
+            "verified live). To merge this merchant's "
+            "transactions into it, use update_transaction with "
+            "merchant_name set to that name on each transaction."
         )
 
 
@@ -460,7 +456,6 @@ async def update_merchant(
     recurring_is_active: Optional[bool] = None,
     recurring_frequency: Optional[str] = None,
     recurring_base_date: Optional[str] = None,
-    allow_merge: bool = False,
 ) -> dict[str, Any]:
     """Update a merchant: name, default category, and recurrence.
 
@@ -474,11 +469,11 @@ async def update_merchant(
     stream, recurring_frequency (e.g. 'monthly') and recurring_base_date (ISO
     date) are REQUIRED; with an existing stream any you omit are kept.
 
-    WARNING -- renaming == merging: setting `name` to the name of ANOTHER
-    existing merchant MERGES this merchant into that one (irreversible). A
-    rename is therefore refused client-side if any other merchant already has
-    that name (or if that can't be ruled out) unless allow_merge=True.
-    Empty/blank names are refused. Verified live against monarch-sandbox."""
+    Renaming onto ANOTHER existing merchant's name is not possible here:
+    Monarch rejects it (verified live), and this refuses up front with a
+    clear message when the name clash is visible. Merging merchants is done
+    by renaming the transactions instead (update_transaction). Empty/blank
+    names are refused."""
     _require_writes("update_merchant")
     if name is not None and not name.strip():
         raise ValueError("update_merchant: name must not be empty")
@@ -488,8 +483,14 @@ async def update_merchant(
             "clear_default_category=True, not both"
         )
     cur = await _get_merchant(merchant_id)
+    if name is not None:
+        # Monarch stores names verbatim (verified live 2026-09-30: a padded
+        # '  X  ' became its own merchant next to 'X'), so strip here -- a
+        # padded duplicate then hits the server's exact-name rejection
+        # instead of silently creating a look-alike merchant.
+        name = name.strip()
     new_name = name if name is not None else cur.get("name")
-    if name is not None and not allow_merge and name != cur.get("name"):
+    if name is not None and name != cur.get("name"):
         await _verify_no_other_merchant_named(merchant_id, name)
 
     if clear_default_category:
