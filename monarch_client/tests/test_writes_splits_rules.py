@@ -406,12 +406,36 @@ def test_uncarried_fields_exist_in_the_rules_query():
 @pytest.mark.parametrize("field", sorted(_NON_DEFAULT))
 async def test_update_rule_refuses_rule_using_uncarried_field(fake, field):
     fake.responses["Web_GetTransactionRules"] = {
-        "transactionRules": [_existing_rule(**{field: _NON_DEFAULT[field]})]
+        # unassignNeedsReviewByUserAction is only "uncarried" when it is NOT the
+        # derived companion of reviewStatusAction='needs_review' (see below).
+        "transactionRules": [_existing_rule(
+            **{field: _NON_DEFAULT[field], "reviewStatusAction": "reviewed"})]
     }
     with pytest.raises(ValueError, match=field):
         await w.update_transaction_rule(
             "r1", add_tag_ids=["t2"], apply_to_existing_transactions=True
         )
+    assert all(op != "Common_UpdateTransactionRuleMutationV2" for op, _ in fake.calls)
+
+
+@pytest.mark.asyncio
+async def test_update_rule_unassign_flag_derived_from_needs_review_is_allowed(fake):
+    # Monarch sets unassignNeedsReviewByUserAction itself when reviewStatusAction
+    # is 'needs_review' (verified live 2026-09-30); a rule this tool just updated
+    # must stay updatable, and needs_review must be re-sent so it is re-derived.
+    fake.responses["Web_GetTransactionRules"] = {"transactionRules": [_existing_rule(
+        reviewStatusAction="needs_review", unassignNeedsReviewByUserAction=True)]}
+    fake.responses["Common_UpdateTransactionRuleMutationV2"] = UPDATE_OK
+    await w.update_transaction_rule("r1", add_tag_ids=["t2"])
+    assert fake.calls[-1][1]["input"]["reviewStatusAction"] == "needs_review"
+
+
+@pytest.mark.asyncio
+async def test_update_rule_unassign_flag_without_needs_review_still_refused(fake):
+    fake.responses["Web_GetTransactionRules"] = {"transactionRules": [_existing_rule(
+        reviewStatusAction=None, unassignNeedsReviewByUserAction=True)]}
+    with pytest.raises(ValueError, match="unassignNeedsReviewByUserAction"):
+        await w.update_transaction_rule("r1", add_tag_ids=["t2"])
     assert all(op != "Common_UpdateTransactionRuleMutationV2" for op, _ in fake.calls)
 
 
@@ -477,3 +501,25 @@ async def test_split_hide_from_reports_defaults_to_parent(fake):
     )
     items = fake.calls[-1][1]["input"]["splitData"]
     assert [i["hideFromReports"] for i in items] == [True, False]
+
+
+@pytest.mark.asyncio
+async def test_update_rule_derived_unassign_does_not_mask_owner_fields(fake):
+    fake.responses["Web_GetTransactionRules"] = {"transactionRules": [_existing_rule(
+        reviewStatusAction="needs_review", unassignNeedsReviewByUserAction=True,
+        criteriaOwnerUserIds=["u1"])]}
+    with pytest.raises(ValueError) as ei:
+        await w.update_transaction_rule("r1", add_tag_ids=["t2"])
+    assert "criteriaOwnerUserIds" in str(ei.value)
+    assert "unassignNeedsReviewByUserAction" not in str(ei.value)
+    assert all(op != "Common_UpdateTransactionRuleMutationV2" for op, _ in fake.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["reviewed", ""])
+async def test_update_rule_changing_status_from_needs_review_is_allowed(fake, status):
+    fake.responses["Web_GetTransactionRules"] = {"transactionRules": [_existing_rule(
+        reviewStatusAction="needs_review", unassignNeedsReviewByUserAction=True)]}
+    fake.responses["Common_UpdateTransactionRuleMutationV2"] = UPDATE_OK
+    await w.update_transaction_rule("r1", review_status=status)
+    assert fake.calls[-1][1]["input"]["reviewStatusAction"] == status

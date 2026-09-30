@@ -380,7 +380,18 @@ VALID_REVIEW_STATUSES = {"needs_review", "reviewed"}
 
 
 def _uncarried_fields_set(rule: dict[str, Any]) -> list[str]:
-    return [k for k in UNCARRIED_RULE_FIELDS if rule.get(k)]
+    """Fields the update input cannot carry that the existing rule has set.
+
+    unassignNeedsReviewByUserAction is DERIVED: Monarch sets it to true itself
+    whenever reviewStatusAction is 'needs_review' (verified live 2026-09-30 --
+    a rule this tool had just updated with review_status='needs_review' came
+    back with it true, and the next update was refused). Sending
+    reviewStatusAction='needs_review' re-derives it, so it is not an
+    uncarried setting in that case."""
+    derived = set()
+    if rule.get("reviewStatusAction") == "needs_review":
+        derived.add("unassignNeedsReviewByUserAction")
+    return [k for k in UNCARRIED_RULE_FIELDS if k not in derived and rule.get(k)]
 
 
 def _merge(current: Any, new: Any) -> Any:
@@ -423,7 +434,9 @@ async def update_transaction_rule(
     when unchanged). Fails closed: if the existing rule sets any of
     UNCARRIED_RULE_FIELDS (owner / business-entity criteria, owner and
     business-entity actions, send-notification, paydown-budget link,
-    unassign-needs-review) the update is REFUSED, since the update input has
+    unassign-needs-review -- the last one except when it is derived from
+    reviewStatusAction='needs_review', which Monarch sets itself and clears when
+    a reviewer is assigned; verified live 2026-09-30) the update is REFUSED, since the update input has
     no verified slot for them and sending would reset them. A call with no
     arguments besides rule_id is also refused."""
     _require_writes("update_transaction_rule")

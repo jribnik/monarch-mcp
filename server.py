@@ -160,10 +160,15 @@ async def update_transaction(
     hide_from_reports: Optional[bool] = None,
     needs_review: Optional[bool] = None,
     notes: Optional[str] = None,
+    reviewed: Optional[bool] = None,
 ) -> dict[str, Any]:
     """
     Update fields on a transaction. Only pass the fields you want to change.
     date is 'YYYY-MM-DD'. Use get_categories for a valid category_id.
+    needs_review=True flags it for review; needs_review=False just clears the
+    flag. reviewed=True is the web app's "Mark as reviewed" (sets review
+    status to 'reviewed' -- a distinct state); pass it instead of needs_review,
+    not with it. reviewed=False is not supported.
     """
     return await client_writes.update_transaction(
         transaction_id,
@@ -174,6 +179,7 @@ async def update_transaction(
         hide_from_reports=hide_from_reports,
         needs_review=needs_review,
         notes=notes,
+        reviewed=reviewed,
     )
 
 

@@ -272,7 +272,9 @@ PROVENANCE: dict[str, dict] = {
             "monarch-sandbox: category->'category', merchant_name->'name' "
             "(NOT 'merchantName'), amount/date only sent when truthy, "
             "hide_from_reports->'hideFromReports', needs_review->'needsReview', "
-            "notes->'notes'. Variables: {'debugActivityLogEnabled': False, "
+            "notes->'notes', reviewed=True->'reviewed' (the web app's Mark-as-reviewed "
+            "button; sets reviewStatus='reviewed', distinct from needsReview=False; "
+            "verified live 2026-09-30). Variables: {'debugActivityLogEnabled': False, "
             "'input': {'id': <txn_id>, ...}}."
         ),
     },

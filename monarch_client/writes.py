@@ -409,6 +409,7 @@ async def _update_transaction(
     hide_from_reports: Optional[bool] = None,
     needs_review: Optional[bool] = None,
     notes: Optional[str] = None,
+    reviewed: Optional[bool] = None,
 ) -> dict[str, Any]:
     """Shared by recategorize_transaction and update_transaction -- same
     mutation, same field-name mapping verified live against
@@ -429,6 +430,18 @@ async def _update_transaction(
         input_["hideFromReports"] = bool(hide_from_reports)
     if needs_review is not None:
         input_["needsReview"] = bool(needs_review)
+    if reviewed is not None:
+        # The web app's "Mark as reviewed" button sends {reviewed: true}, which
+        # sets reviewStatus='reviewed' -- a DIFFERENT state from
+        # needsReview=False (which leaves reviewStatus null). Verified live
+        # 2026-09-30. Only True is supported; False is unverified.
+        if reviewed is not True:
+            raise ValueError("update_transaction: reviewed only supports True")
+        if needs_review is not None:
+            raise ValueError(
+                "update_transaction: pass reviewed=True OR needs_review, not both"
+            )
+        input_["reviewed"] = True
     if notes is not None:
         input_["notes"] = notes
 
@@ -453,6 +466,7 @@ async def update_transaction(
     hide_from_reports: Optional[bool] = None,
     needs_review: Optional[bool] = None,
     notes: Optional[str] = None,
+    reviewed: Optional[bool] = None,
 ) -> dict[str, Any]:
     _require_writes("update_transaction")
     return await _update_transaction(
@@ -464,6 +478,7 @@ async def update_transaction(
         hide_from_reports=hide_from_reports,
         needs_review=needs_review,
         notes=notes,
+        reviewed=reviewed,
     )
 
 

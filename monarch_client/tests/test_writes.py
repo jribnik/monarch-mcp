@@ -567,3 +567,33 @@ async def test_mark_stream_as_not_recurring_defaults_missing_success_to_false(fa
     }
     result = await writes.mark_stream_as_not_recurring("stream123")
     assert result == {"success": False}
+
+
+@pytest.mark.asyncio
+async def test_update_transaction_reviewed_true_sends_reviewed(fake_client):
+    fake_client.responses["Web_TransactionDrawerUpdateTransaction"] = {
+        "updateTransaction": {"transaction": {"id": "t1"}, "errors": None}
+    }
+    await writes.update_transaction("t1", reviewed=True)
+    assert fake_client.calls[0][1]["input"] == {"id": "t1", "reviewed": True}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kwargs", [
+    {"reviewed": False},
+    {"reviewed": True, "needs_review": False},
+    {"reviewed": True, "needs_review": True},
+])
+async def test_update_transaction_reviewed_misuse_refused(fake_client, kwargs):
+    with pytest.raises(ValueError):
+        await writes.update_transaction("t1", **kwargs)
+    assert fake_client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_update_transaction_reviewed_with_other_fields(fake_client):
+    fake_client.responses["Web_TransactionDrawerUpdateTransaction"] = {
+        "updateTransaction": {"transaction": {"id": "t1"}, "errors": None}
+    }
+    await writes.update_transaction("t1", notes="n", reviewed=True)
+    assert fake_client.calls[0][1]["input"] == {"id": "t1", "notes": "n", "reviewed": True}
