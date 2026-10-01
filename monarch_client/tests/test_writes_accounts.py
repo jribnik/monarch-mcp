@@ -18,7 +18,7 @@ ACCOUNT = {
     "interestRateType": None, "minimumPayment": None, "plannedPayment": None,
     "excludeFromDebtPaydown": False, "type": {"name": "depository"},
     "subtype": {"name": "checking"}, "credential": None, "ownedByUser": None,
-    "businessEntity": None,
+    "businessEntity": None, "isAsset": True,
 }
 
 
@@ -125,6 +125,27 @@ async def test_update_account_refuses_linked_and_missing(fake):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("patch", [{"isAsset": False}, {"isAsset": None}, {"isAsset": "true"}])
+async def test_update_account_refuses_non_asset_accounts(fake, patch):
+    fake.responses["Common_GetAccountForEdit"] = {"account": {**ACCOUNT, **patch}}
+    with pytest.raises(ValueError, match="not an asset"):
+        await wa.update_account("a1", name="x")
+    acct = {k: v for k, v in ACCOUNT.items() if k != "isAsset"}
+    fake.responses["Common_GetAccountForEdit"] = {"account": acct}
+    with pytest.raises(ValueError, match="recurrence"):
+        await wa.update_account("a1", name="x")
+    assert _mutations(fake) == []
+
+
+@pytest.mark.asyncio
+async def test_delete_account_still_allowed_for_liability(fake):
+    fake.responses["Common_GetAccountForEdit"] = {"account": {**ACCOUNT, "isAsset": False}}
+    fake.responses["Common_DeleteAccount"] = {"deleteAccount": {"deleted": True, "errors": None}}
+    await wa.delete_account("a1", "zz-acct")
+    assert len(_mutations(fake)) == 1
+
+
+@pytest.mark.asyncio
 async def test_update_account_surfaces_errors(fake):
     fake.responses["Common_UpdateAccount"] = {"updateAccount": {"account": None, "errors": {"message": "bad"}}}
     r = await wa.update_account("a1", name="x")
@@ -186,8 +207,13 @@ async def test_negative_amount_rejected(fake):
 @pytest.mark.asyncio
 async def test_set_flex_budget_amount(fake):
     fake.responses["Common_UpdateFlexBudgetMutation"] = {"updateOrCreateFlexBudgetItem": {"budgetItem": {"budgetAmount": 9}}}
-    r = await wa.set_flex_budget_amount(9, "2026-10-01", apply_to_future=True, confirm="2026-10-01")
-    assert fake.calls == [("Common_UpdateFlexBudgetMutation", {"input": {
+    fake.responses["Common_GetJointPlanningData"] = {"budgetData": {
+        "monthlyAmountsForFlexExpense": {"monthlyAmounts": [
+            {"month": "2026-10-01", "plannedCashFlowAmount": 4.5}]}}}
+    r = await wa.set_flex_budget_amount(9, "2026-10-01", apply_to_future=True, confirm="4.50")
+    assert fake.calls[0] == ("Common_GetJointPlanningData",
+                             {"startDate": "2026-10-01", "endDate": "2026-10-01"})
+    assert fake.calls[1:] == [("Common_UpdateFlexBudgetMutation", {"input": {
         "startDate": "2026-10-01", "amount": 9, "applyToFuture": True}})]
     assert r["updateOrCreateFlexBudgetItem"]["budgetItem"]["budgetAmount"] == 9
 

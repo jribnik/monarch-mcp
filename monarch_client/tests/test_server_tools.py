@@ -65,6 +65,7 @@ EXPECTED_TOOLS = EXPECTED_READ_TOOLS | EXPECTED_WRITE_TOOLS
 CONFIRM_REQUIRED = {
     "delete_transaction": "confirm", "delete_tag": "confirm",
     "delete_transaction_rule": "confirm", "delete_category_group": "confirm",
+    "delete_category": "confirm",
     "delete_savings_goal": "confirm", "mark_stream_as_not_recurring": "confirm",
     "delete_account": "confirm_name",
 }
@@ -72,6 +73,7 @@ CONFIRM_REQUIRED = {
 CONFIRM_OPTIONAL = {
     "set_budget_amount", "set_flex_budget_amount",
     "set_savings_goal_budget_amount", "create_transaction_rule",
+    "update_transaction_rule",
 }
 
 _STUB_RESULT = {"ok": True, "items": [{"id": "x", "name": "y"}], "errors": None}

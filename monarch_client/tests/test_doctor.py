@@ -100,3 +100,20 @@ async def test_smoke_call_never_prints_email(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "u1" in out
     assert "someone@example.com" not in out
+
+
+def test_doctor_hints_about_exported_cookies_and_state_dir_mode(monkeypatch, tmp_path, capsys):
+    import os
+    from monarch_client import auth
+    state = tmp_path / "state"
+    state.mkdir()
+    os.chmod(state, 0o755)
+    monkeypatch.setattr(auth, "STATE_DIR", state)
+    monkeypatch.setattr(auth, "load", lambda: auth.AuthMaterial({"a": "x"}, {}, None, None))
+    doctor._check_auth()
+    out = capsys.readouterr().out
+    assert "ONLY these exported cookies" in out
+    assert "chmod 700" in out
+    os.chmod(state, 0o700)
+    doctor._check_auth()
+    assert "chmod 700" not in capsys.readouterr().out

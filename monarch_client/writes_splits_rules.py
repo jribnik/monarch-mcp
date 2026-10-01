@@ -28,9 +28,10 @@ from __future__ import annotations
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 
-from . import reads
+from . import project, reads
 from .writes import (
     _call,
+    _require_confirm,
     _require_writes,
     _verify_merchant_name_exists,
 )
@@ -416,6 +417,7 @@ async def update_transaction_rule(
     link_savings_goal_id: Optional[str] = None,
     split_action: Optional[dict[str, Any]] = None,
     apply_to_existing_transactions: bool = False,
+    confirm: Optional[str] = None,
 ) -> dict[str, Any]:
     """Update an existing rule. The mutation replaces the whole rule, so this
     reads the current rule first and merges: an argument left as None KEEPS
@@ -434,7 +436,15 @@ async def update_transaction_rule(
     reviewStatusAction='needs_review', which Monarch sets itself and clears when
     a reviewer is assigned; verified live 2026-09-30) the update is REFUSED, since the update input has
     no verified slot for them and sending would reset them. A call with no
-    arguments besides rule_id is also refused."""
+    arguments besides rule_id is also refused.
+
+    apply_to_existing_transactions=True re-runs the (merged) rule over every
+    matching HISTORICAL transaction, so -- like create_transaction_rule -- it
+    needs `confirm` == str(totalCount) from a fresh
+    Common_PreviewTransactionRule of the merged rule's criteria (the match
+    count depends only on the criteria). Refused if the preview returns no
+    totalCount or the preview call fails (fail closed). Ignored (not
+    required) when False."""
     _require_writes("update_transaction_rule")
     if review_status is not None and review_status != "" and (
         review_status not in VALID_REVIEW_STATUSES
@@ -536,6 +546,41 @@ async def update_transaction_rule(
         raise ValueError(
             "this update would leave the rule with no actions, which Monarch "
             "rejects -- use delete_transaction_rule to remove a rule instead"
+        )
+
+    if apply_to_existing_transactions:
+        preview_rule: dict[str, Any] = {
+            "merchantCriteriaUseOriginalStatement": merged["merchantCriteriaUseOriginalStatement"],
+            "merchantCriteria": merged.get("merchantCriteria"),
+            "amountCriteria": merged["amountCriteria"],
+            "categoryIds": merged["categoryIds"],
+            "accountIds": merged["accountIds"],
+            "setCategoryAction": None,
+            "addTagsAction": None,
+            "setMerchantAction": None,
+            "splitTransactionsAction": None,
+            "applyToExistingTransactions": False,
+        }
+        # Same convention as create's preview: the two criteria lists are
+        # sent only when present.
+        for key in ("merchantNameCriteria", "originalStatementCriteria"):
+            if merged.get(key) is not None:
+                preview_rule[key] = merged[key]
+        preview = await _call(
+            "Common_PreviewTransactionRule", {"rule": preview_rule, "offset": 0}
+        )
+        total = (project.preview_transaction_rule_result(preview)
+                 .get("transactionRulePreview") or {}).get("totalCount")
+        if total is None:
+            raise ValueError(
+                "update_transaction_rule: couldn't determine how many existing "
+                "transactions this rule matches (preview returned no totalCount) "
+                "-- NOT applying it retroactively."
+            )
+        _require_confirm(
+            "update_transaction_rule", confirm, [str(total)],
+            f"the number of existing transactions this rule would change ({total}); "
+            "pass confirm=str(that count) after running preview_transaction_rule",
         )
 
     data = await _call("Common_UpdateTransactionRuleMutationV2", {"input": merged})

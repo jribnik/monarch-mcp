@@ -20,13 +20,21 @@ PROVENANCE for each op's provenance.
 Safety layers, outermost first:
   1. gate.py's MONARCH_CLIENT_ENABLE_WRITES master switch, checked by every
      tool (_require_writes) and again by _call / MonarchClient.call.
-  2. _require_confirm: destructive tools (delete_transaction, delete_tag,
-     delete_transaction_rule, mark_stream_as_not_recurring here; delete_account,
-     delete_category_group, delete_savings_goal in the sibling modules) take a
-     REQUIRED `confirm` that must echo the target as returned by a FRESH read
-     done inside the tool, and refuse before sending anything otherwise.
-     create_transaction_rule(apply_to_existing_transactions=True) and the
-     apply_to_future=True budget tools require one too.
+  2. _require_confirm: the 8 destructive tools (delete_transaction,
+     delete_tag, delete_transaction_rule, mark_stream_as_not_recurring here;
+     delete_account, delete_savings_goal in writes_accounts.py;
+     delete_category_group, delete_category in writes_categories.py) take a
+     REQUIRED `confirm` that must echo a value derived from a FRESH read done
+     inside the tool: the target's name, except delete_transaction
+     ("<merchant> <amount>", see transaction_confirm_token) and
+     delete_transaction_rule (its first criterion value / category name, see
+     rule_confirm_token). They refuse before sending anything otherwise.
+     create_transaction_rule / update_transaction_rule with
+     apply_to_existing_transactions=True need confirm == str(preview
+     totalCount), and the apply_to_future=True budget tools need the
+     category / goal name or (flex) the month's current amount, each from a
+     fresh read. A confirm proves the caller looked at the target; it is
+     not authentication (the model supplies it).
   3. Per-tool client-side validation: _require_manual (fail-closed
      manual-account check for create_transaction/update_account/
      delete_account) and _verify_merchant_name_exists (rule merchant names).
@@ -62,6 +70,7 @@ Gotchas discovered live and enforced here:
 from __future__ import annotations
 
 import math
+from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 
 from . import MonarchClient, gate, operations, project
@@ -353,9 +362,36 @@ async def create_transaction_rule(
     return project.create_transaction_rule_result(data)
 
 
+def rule_confirm_token(rule: dict[str, Any]) -> str:
+    """What delete_transaction_rule's `confirm` must equal: a human-readable
+    value that only a fresh get_transaction_rules read reveals (rules have no
+    name, and their id is already passed as rule_id, so echoing the id would
+    prove nothing). In order: the first merchant-name criterion's value, else
+    the first original-statement criterion's, else the first merchantCriteria
+    value, else the setCategoryAction category's name, else the literal
+    fallback "rule <id>". All of those fields are selected by
+    Web_GetTransactionRules. This is NOT unique (two rules may match
+    "amazon"); the target is still pinned by rule_id -- the gate only proves
+    the caller looked at the rule it is about to delete."""
+    for key in ("merchantNameCriteria", "originalStatementCriteria", "merchantCriteria"):
+        for crit in rule.get(key) or []:
+            value = (crit or {}).get("value")
+            if isinstance(value, str) and value:
+                return value
+    category = (rule.get("setCategoryAction") or {}).get("name")
+    if isinstance(category, str) and category:
+        return category
+    return f"rule {rule.get('id')}"
+
+
 async def delete_transaction_rule(rule_id: str, confirm: str) -> dict[str, Any]:
-    """A rule has no name, so `confirm` must equal the rule's id as found in
-    a fresh get_transaction_rules read (which also refuses unknown ids)."""
+    """IRREVERSIBLE. A rule has no name and its id is already the rule_id
+    argument, so `confirm` must instead equal rule_confirm_token(rule): the
+    rule's first merchant-name / original-statement criterion value, else its
+    set-category action's category name, else "rule <id>", taken from a fresh
+    get_transaction_rules read. The gate proves the caller read this rule
+    (and an unknown id is refused); it does not make the target unique -- the
+    id does that."""
     _require_writes("delete_transaction_rule")
     rules = (await reads.get_transaction_rules()).get("transactionRules") or []
     rule = next((r for r in rules if str(r.get("id")) == str(rule_id)), None)
@@ -364,8 +400,11 @@ async def delete_transaction_rule(rule_id: str, confirm: str) -> dict[str, Any]:
             f"delete_transaction_rule: rule_id={rule_id!r} wasn't found in "
             "get_transaction_rules."
         )
+    token = rule_confirm_token(rule)
     _require_confirm(
-        "delete_transaction_rule", confirm, [str(rule.get("id"))], "the rule's id"
+        "delete_transaction_rule", confirm, [token],
+        f"the rule's first criterion value / category name {token!r} "
+        "(see get_transaction_rules)",
     )
     data = await _call("Common_DeleteTransactionRule", {"id": rule_id})
     return project.delete_transaction_rule_result(data)
@@ -412,10 +451,37 @@ async def create_transaction(
     return project.create_transaction_result(data)
 
 
+def transaction_confirm_token(txn: dict[str, Any]) -> str:
+    """What delete_transaction's `confirm` must equal: "<merchant name>
+    <amount>" with the amount signed, fixed to two decimals and last, e.g.
+    "Amazon -12.34" (expense) or "Acme Payroll 2500.00" (credit); when the
+    transaction has no merchant, just the amount ("-12.34"). Built from a
+    fresh get_transaction_details read. The merchant name alone isn't unique
+    (every Amazon purchase shares it), so the amount is what pins it to this
+    transaction. Raises ValueError if the read has no usable amount (the gate
+    fails closed rather than falling back to something weaker)."""
+    amount = txn.get("amount")
+    if isinstance(amount, bool) or not isinstance(amount, (int, float, str)):
+        raise ValueError("delete_transaction: the transaction has no readable amount")
+    try:
+        d = Decimal(str(amount))
+        if not d.is_finite():
+            raise InvalidOperation
+        d = d.quantize(Decimal("0.01"))
+    except InvalidOperation:
+        raise ValueError(
+            f"delete_transaction: unreadable transaction amount {amount!r}"
+        ) from None
+    if d == 0:
+        d = abs(d)  # never "-0.00"
+    merchant = (txn.get("merchant") or {}).get("name")
+    return f"{merchant} {d}" if merchant else str(d)
+
+
 async def delete_transaction(transaction_id: str, confirm: str) -> dict[str, Any]:
-    """Added 2026-09-28, closing create_transaction's missing counterpart --
-    flagged as a real irreversibility gap by an Opus review (a mistaken
-    manual transaction had no way to be undone through this server).
+    """IRREVERSIBLE. Added 2026-09-28, closing create_transaction's missing
+    counterpart -- flagged as a real irreversibility gap by an Opus review (a
+    mistaken manual transaction had no way to be undone through this server).
     Recovered from the old abandoned library (see
     Common_DeleteTransactionMutation's PROVENANCE note), verified live
     against monarch-sandbox: created a real transaction, deleted it,
@@ -423,20 +489,22 @@ async def delete_transaction(transaction_id: str, confirm: str) -> dict[str, Any
     actually gone. Works on any transaction this account can see, not just
     manually-created ones, INCLUDING bank-synced transactions -- same as the
     real web app's delete button -- so it is gated: `confirm` must exactly
-    equal the transaction's merchant name (or, for a transaction with no
-    merchant, its id) as returned by a FRESH get_transaction_details read.
-    An unknown id is refused."""
+    equal "<merchant name> <amount>" (amount signed, two decimals, e.g.
+    "Amazon -12.34"), or just the amount ("-12.34") when the transaction has
+    no merchant -- see transaction_confirm_token -- as returned by a FRESH
+    get_transaction_details read. The amount is included because merchant
+    names repeat. An unknown id is refused."""
     _require_writes("delete_transaction")
     txn = (await reads.get_transaction_details(transaction_id)).get("getTransaction")
     if not txn:
         raise ValueError(
             f"delete_transaction: transaction_id={transaction_id!r} wasn't found."
         )
-    merchant = (txn.get("merchant") or {}).get("name")
+    token = transaction_confirm_token(txn)
     _require_confirm(
-        "delete_transaction", confirm, [merchant or str(txn.get("id") or transaction_id)],
-        f"the transaction's merchant name {merchant!r} (amount {txn.get('amount')}, "
-        f"date {txn.get('date')})",
+        "delete_transaction", confirm, [token],
+        f"\"<merchant name> <amount>\" (just the amount if no merchant) = {token!r} "
+        f"(date {txn.get('date')})",
     )
     data = await _call(
         "Common_DeleteTransactionMutation", {"input": {"transactionId": transaction_id}}

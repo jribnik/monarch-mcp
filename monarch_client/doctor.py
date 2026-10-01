@@ -60,6 +60,23 @@ def _check_auth() -> Optional[auth.AuthMaterial]:
     print(f"       expires_at (informational bound only): {material.expires_at}")
     print(f"       exported_at: {material.exported_at}")
 
+    print(
+        "       [info] requests send ONLY these exported cookies; cookies the "
+        "server sets later (e.g. a refreshed __cf_bm) are not kept between "
+        "calls. If the smoke call below fails with a 403/challenge, re-export "
+        "the session (command above)."
+    )
+    state_dir = auth.STATE_DIR
+    try:
+        mode = state_dir.stat().st_mode & 0o777
+    except OSError:
+        mode = None
+    if mode is not None and mode & 0o077:
+        print(
+            f"       [info] {state_dir} is mode {mode:04o}; it holds your session "
+            f"cookies, so consider: chmod 700 {state_dir} (monarch_client never "
+            "creates or chmods it)"
+        )
     path = auth.cache_path()
     if path.exists():
         age_hours = (time.time() - path.stat().st_mtime) / 3600

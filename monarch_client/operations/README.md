@@ -134,15 +134,17 @@ monarchmoney-enhanced library -- and verified by a direct functional call plus
 a follow-up read). The three hand-written reads above are likewise not
 catalog-exported.
 
-### The monarch-sandbox account no longer exists
+### The monarch-sandbox Monarch account no longer exists
 
 Everything above was captured and verified live against `monarch-sandbox`, a
-dedicated disposable Monarch account registered in api-recon's adapter
-registry. That account has been **deleted** (it cost money to keep), so
-"verified live against monarch-sandbox" in `.graphql` headers, PROVENANCE notes
-and docstrings is dated history -- the `monarch-sandbox` site in api-recon, its
-`recon login`, and `MONARCH_CLIENT_SITE=monarch-sandbox` no longer work. (A
-leftover `~/.monarch-mcp/api-auth.monarch-sandbox.json` is dead local state.)
+dedicated disposable Monarch account. That Monarch **account** has been
+**deleted** (it cost money to keep), so "verified live against monarch-sandbox"
+in `.graphql` headers, PROVENANCE notes and docstrings is dated history.
+api-recon still registers a `monarch-sandbox` adapter site *name*
+(`src/recon/adapters/__init__.py`), so the name resolves there, but no account
+sits behind it: its `recon login` and `MONARCH_CLIENT_SITE=monarch-sandbox`
+cannot work. (A leftover `~/.monarch-mcp/api-auth.monarch-sandbox.json` is dead
+local state.)
 Vendoring and re-vendoring READ operations is unaffected: it needs only the
 real `monarch` site, via the checklist at the top of this file.
 

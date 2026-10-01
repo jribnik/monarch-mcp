@@ -220,12 +220,15 @@ async def test_update_rule_noop_roundtrips_existing_fields(fake):
 async def test_update_rule_merges_only_given_fields(fake):
     fake.responses["Web_GetTransactionRules"] = {"transactionRules": [_existing_rule()]}
     fake.responses["Common_UpdateTransactionRuleMutationV2"] = UPDATE_OK
+    fake.responses["Common_PreviewTransactionRule"] = {
+        "transactionRulePreview": {"totalCount": 3, "results": []}}
     await w.update_transaction_rule(
         "r1",
         merchant_name_criteria=[{"operator": "eq", "value": "zed"}],
         add_tag_ids=["tag2"],
         set_hide_from_reports=True,
         apply_to_existing_transactions=True,
+        confirm="3",
     )
     inp = fake.calls[-1][1]["input"]
     assert inp["merchantNameCriteria"] == [{"operator": "eq", "value": "zed"}]

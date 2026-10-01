@@ -139,7 +139,7 @@ def create_transaction_rule_result(data: dict[str, Any]) -> dict[str, Any]:
             "errors": result.get("errors"),
             "transactionRule": result.get("transactionRule"),  # always None here
         }
-        }
+    }
 
 
 def update_transaction_result(data: dict[str, Any]) -> dict[str, Any]:

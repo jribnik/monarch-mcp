@@ -113,6 +113,12 @@ async def _post(
     # B's requests) and let a server Set-Cookie silently replace the
     # exported session value on later calls. An explicit Cookie header takes
     # precedence over the jar in httpx/urllib.
+    # Consequence: ONLY the exported cookies are ever sent. A cookie the
+    # server sets later (e.g. a refreshed Cloudflare `__cf_bm`) is dropped
+    # with the jar and not carried to the next call, so a cookie missing from
+    # the export stays missing. Run `python -m monarch_client.doctor` once
+    # after deploying this behavior (and after any re-export) to confirm the
+    # exported set alone still gets a smoke call through.
     headers = _build_headers(material)
     headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in material.cookies.items())
     body = {"operationName": op_name, "variables": variables, "query": query_text}

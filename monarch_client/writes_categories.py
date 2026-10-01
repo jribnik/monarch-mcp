@@ -12,9 +12,10 @@ All eight operations were captured from the live web app against the
 disposable monarch-sandbox account on 2026-09-30 (api-recon UI capture,
 not catalog-exported; see PROVENANCE_ENTRIES below and operations/README.md)
 and verified live against that sandbox (since deleted; dated history).
-delete_category_group requires a `confirm` equal to the group's name (fresh
-read, writes._require_confirm); delete_category's own move/uncategorize
-argument is its confirmation. No merchant DELETE is built
+delete_category_group and delete_category each require a `confirm` equal to
+the group's / category's current name (fresh get_categories read,
+writes._require_confirm); delete_category additionally needs its explicit
+move/uncategorize choice. No merchant DELETE is built
 (deliberately: Common_DeleteMerchant is destructive and out of scope).
 
 Error convention: like the other write results (project.delete_tag_result
@@ -366,15 +367,29 @@ async def update_category(
 
 async def delete_category(
     category_id: str,
+    confirm: str,
     move_to_category_id: Optional[str] = None,
     uncategorize_transactions: bool = False,
 ) -> dict[str, Any]:
-    """Delete a category. Transactions in it are reassigned to
-    move_to_category_id. Deleting WITHOUT a move target un-categorizes every
-    transaction in the category, so that must be requested explicitly with
-    uncategorize_transactions=True -- with neither argument a ValueError is
-    raised before anything is sent. Verified live against monarch-sandbox."""
+    """IRREVERSIBLE. Delete a category. `confirm` must exactly equal the
+    category's current name (case-sensitive), from a fresh get_categories
+    read made inside the tool; an unknown id is refused. Transactions in it
+    are reassigned to move_to_category_id. Deleting WITHOUT a move target
+    un-categorizes every transaction in the category, so that must be
+    requested explicitly with uncategorize_transactions=True -- with neither
+    argument a ValueError is raised before anything is sent. Verified live
+    against monarch-sandbox."""
     _require_writes("delete_category")
+    cats = (await reads.get_categories()).get("categories") or []
+    cat = next((c for c in cats if c.get("id") == category_id), None)
+    if cat is None:
+        raise ValueError(
+            f"delete_category: category_id={category_id!r} wasn't found in get_categories."
+        )
+    _require_confirm(
+        "delete_category", confirm, [cat.get("name")],
+        f"the category's name {cat.get('name')!r}",
+    )
     if move_to_category_id is None and not uncategorize_transactions:
         raise ValueError(
             "delete_category: pass move_to_category_id to reassign this "
@@ -414,6 +429,10 @@ async def update_tag(
 
 
 _MERCHANT_SEARCH_LIMIT = 100
+
+# The only defaultCategoryApplicationMode value with capture evidence
+# (api-recon captured-mutations-2026-09-30.json); see update_merchant.
+_KNOWN_APPLICATION_MODE = "new_and_edits"
 
 
 async def _get_merchant(merchant_id: str) -> dict[str, Any]:
@@ -490,7 +509,17 @@ async def update_merchant(
     Monarch rejects it (verified live), and this refuses up front with a
     clear message when the name clash is visible. Merging merchants is done
     by renaming the transactions instead (update_transaction). Empty/blank
-    names are refused."""
+    names are refused.
+
+    default_category_application_mode is validated: the only value with
+    capture evidence (api-recon's 2026-09-30 sandbox UI capture) is
+    "new_and_edits" (apply to new transactions and edits); the other mode
+    names, and in particular whichever one retroactively re-categorizes every
+    EXISTING transaction of the merchant, were never captured and are
+    unknown. So only "new_and_edits" or the merchant's own current mode
+    (from the fresh read) is accepted; any other string is refused rather
+    than sent unverified. To apply a default category retroactively, do it
+    in the Monarch web app, or recategorize_transaction each one."""
     _require_writes("update_merchant")
     if name is not None and not name.strip():
         raise ValueError("update_merchant: name must not be empty")
@@ -500,6 +529,19 @@ async def update_merchant(
             "clear_default_category=True, not both"
         )
     cur = await _get_merchant(merchant_id)
+    if default_category_application_mode is not None:
+        allowed = {_KNOWN_APPLICATION_MODE}
+        if cur.get("defaultCategoryApplicationMode"):
+            allowed.add(cur["defaultCategoryApplicationMode"])
+        if default_category_application_mode not in allowed:
+            raise ValueError(
+                f"update_merchant: default_category_application_mode="
+                f"{default_category_application_mode!r} is not a verified value "
+                f"(accepted: {sorted(allowed)}). Only 'new_and_edits' was ever "
+                "captured; other modes are unknown and one of them may "
+                "retroactively re-categorize ALL of the merchant's existing "
+                "transactions. NOT sending. Use the Monarch web app for that."
+            )
     if name is not None:
         # Monarch stores names verbatim (verified live 2026-09-30: a padded
         # '  X  ' became its own merchant next to 'X'), so strip here -- a
@@ -550,7 +592,7 @@ async def update_merchant(
         }
     mode = default_category_application_mode or cur.get(
         "defaultCategoryApplicationMode"
-    ) or "new_and_edits"
+    ) or _KNOWN_APPLICATION_MODE
     data = await _call(
         "Common_UpdateMerchant",
         {

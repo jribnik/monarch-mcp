@@ -28,10 +28,12 @@ monarch_client's hot path.
 
 Which ACCOUNT this reads for is controlled by `MONARCH_CLIENT_SITE`
 (default: "monarch", the real account), not hardcoded. The mechanism exists
-so a non-real account can be pointed at for testing: api-recon once
-registered a "monarch-sandbox" site backed by a dedicated, disposable Monarch
-account, which has since been DELETED, so today any other site name only
-works if you have re-registered one in api-recon. Each site gets its own
+so a non-real account can be pointed at for testing: api-recon registered a
+"monarch-sandbox" site backed by a dedicated, disposable Monarch account.
+That Monarch ACCOUNT has since been DELETED, but api-recon still registers a
+`monarch-sandbox` adapter site name (src/recon/adapters/__init__.py), so the
+name still resolves there while no live account sits behind it; any other
+site name only works if you have a real session for it in api-recon. Each site gets its own
 cache file, so a real-account file and a test-account file never collide or
 overwrite each other. THIS DISTINCTION MATTERS: an earlier mistake in this
 project ran a live `create_tag` mutation against the real account while
@@ -84,7 +86,8 @@ class AuthMaterial:
 def site() -> str:
     """Which api-recon site this client reads auth material for. Override
     with MONARCH_CLIENT_SITE (any site api-recon has a session for; the old
-    "monarch-sandbox" account no longer exists). Defaults to "monarch", the
+    "monarch-sandbox" Monarch account no longer exists, though api-recon still
+    registers that site name). Defaults to "monarch", the
     real account."""
     return os.environ.get("MONARCH_CLIENT_SITE", DEFAULT_SITE)
 

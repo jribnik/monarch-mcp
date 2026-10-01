@@ -21,9 +21,14 @@ entry's note.
 Safety: account edits/deletes go through the fail-closed _require_manual gate
 (shared from writes.py). delete_account (confirm_name) and delete_savings_goal
 (confirm) require the target's exact current name, and the three budget tools
-require a `confirm` when apply_to_future=True (category / goal name, or the
-month for the flex budget) -- each checked against a fresh read, see
+require a `confirm` when apply_to_future=True: the category's name
+(set_budget_amount), the goal's name (set_savings_goal_budget_amount), or the
+month's CURRENT flex amount formatted to two decimals (set_flex_budget_amount,
+see _flex_amount_token) -- each checked against a fresh read, see
 writes._require_confirm.
+
+update_account additionally refuses any account not positively an asset
+(isAsset is not True): see its docstring for why (an unverified `recurrence`).
 """
 
 from __future__ import annotations
@@ -31,6 +36,7 @@ from __future__ import annotations
 import datetime
 import math
 import re
+from decimal import Decimal
 from typing import Any, Optional
 
 from . import reads
@@ -258,7 +264,19 @@ async def update_account(
     """Edit a MANUAL account. Only the fields you pass change: the account's
     current values are read first and resent in full (Monarch's input is
     full-ish). notes="" clears the notes. account_type and account_subtype
-    must be given together (a pair from get_account_type_options)."""
+    must be given together (a pair from get_account_type_options).
+
+    ASSET accounts only. Every update resends `recurrence: {}` (what the web
+    app sent in the one capture we have, an asset account with no
+    recurrence), but Common_GetAccountForEdit cannot read an existing
+    recurrence back, so on a manual LIABILITY account (loan, credit card,
+    mortgage...) that has a payment recurrence this could silently CLEAR it.
+    That is unverified either way, so accounts whose isAsset is not true are
+    refused. The proper fix is to capture a web-app edit of a manual
+    liability account that HAS a recurrence (the api-recon sandbox account
+    is gone, so that needs a real manual liability account) and carry the
+    recurrence through; until then edit liability accounts in the Monarch
+    web app."""
     _require_writes("update_account")
     changes = {
         "name": name, "display_balance": display_balance, "notes": notes,
@@ -282,6 +300,15 @@ async def update_account(
 
     cur = await _get_account_for_edit(account_id)
     _require_manual(cur, "update_account")
+    if cur.get("isAsset") is not True:
+        raise ValueError(
+            f"update_account: account {cur.get('id')!r} ({cur.get('displayName')!r}) "
+            "is not an asset account (isAsset is not true). This tool resends "
+            "`recurrence: {}`, which could clear an existing payment "
+            "recurrence on a manual liability account (unverified: the only "
+            "capture was an asset account). Refusing -- edit it in the "
+            "Monarch web app. NOT sending."
+        )
 
     input_: dict[str, Any] = {
         "id": cur["id"],
@@ -300,10 +327,10 @@ async def update_account(
         # Resent as the web app itself sends them for a manual account (see
         # api-recon's captured-mutations-2026-09-30.json, Common_UpdateAccount).
         # synced=False is correct because _require_manual above guarantees a
-        # manual account. recurrence={} is what the UI sent for an account with
-        # no recurrence; Common_GetAccountForEdit selects no recurrence field,
-        # so an EXISTING one cannot be read back and would be cleared -- not
-        # verified either way for an account that has one.
+        # manual account. recurrence={} is what the UI sent for an asset
+        # account with no recurrence; Common_GetAccountForEdit selects no
+        # recurrence field, so an EXISTING one cannot be read back and might
+        # be cleared -- hence update_account refuses non-asset accounts above.
         "synced": False,
         "apr": cur.get("apr"),
         "excludeFromDebtPaydown": bool(cur.get("excludeFromDebtPaydown")),
@@ -401,6 +428,26 @@ async def set_budget_amount(
     return budget_item_result(data)
 
 
+def _flex_amount_token(budgets: dict[str, Any], month: str) -> str:
+    """The flex budget amount currently planned for `month`, from a fresh
+    get_budgets read (budgetData.monthlyAmountsForFlexExpense.monthlyAmounts
+    [month == month].plannedCashFlowAmount), as a string with exactly two
+    decimals ("250.00"; a month whose planned amount is null reads as
+    "0.00"). Raises if the month is absent from the read."""
+    flex = ((budgets.get("budgetData") or {}).get("monthlyAmountsForFlexExpense") or {})
+    for entry in flex.get("monthlyAmounts") or []:
+        if (entry or {}).get("month") == month:
+            planned = entry.get("plannedCashFlowAmount")
+            if planned is None:
+                planned = 0
+            return f"{Decimal(str(planned)).quantize(Decimal('0.01'))}"
+    raise ValueError(
+        f"set_flex_budget_amount: month {month!r} wasn't found in the flex "
+        "budget read (get_budgets budgetData.monthlyAmountsForFlexExpense) -- "
+        "NOT proceeding, since the amount being overwritten can't be shown."
+    )
+
+
 async def set_flex_budget_amount(
     amount: float,
     month: str,
@@ -409,14 +456,22 @@ async def set_flex_budget_amount(
 ) -> dict[str, Any]:
     """Set the Flex-mode flexible-spending budget for one month
     (month = 'YYYY-MM-01'). With apply_to_future=True it also overwrites all
-    LATER months, so `confirm` is then required and must equal `month`."""
+    LATER months, so `confirm` is then required and must equal the flex
+    amount CURRENTLY planned for `month`, formatted with two decimals (e.g.
+    "250.00"; "0.00" if unset), read fresh from get_budgets for that month --
+    i.e. the caller must have seen the number it is about to overwrite. Not
+    needed for a single month."""
     _require_writes("set_flex_budget_amount")
     _check_month(month)
     _check_amount(amount)
     if apply_to_future:
+        current = _flex_amount_token(
+            await reads.get_budgets(start_date=month, end_date=month), month
+        )
         _require_confirm(
-            "set_flex_budget_amount", confirm, [month],
-            "the month being set (apply_to_future=True overwrites every later month)",
+            "set_flex_budget_amount", confirm, [current],
+            f"the flex amount currently planned for {month} ({current}) "
+            "(apply_to_future=True overwrites it and every later month)",
         )
     data = await _call(
         "Common_UpdateFlexBudgetMutation",
@@ -537,7 +592,9 @@ async def set_savings_goal_budget_amount(
     """Set the monthly budgeted contribution to a savings goal
     (month = 'YYYY-MM-01'). With apply_to_future=True it also overwrites all
     LATER months, so `confirm` is then required and must exactly equal the
-    goal's name (fresh get_budgets read)."""
+    goal's name (fresh get_budgets read). The goal is looked up
+    only in get_budgets' DEFAULT window (previous month through next month's
+    start); a goal that read doesn't show is refused."""
     _require_writes("set_savings_goal_budget_amount")
     _check_month(month)
     _check_amount(amount)
@@ -564,7 +621,9 @@ async def set_savings_goal_budget_amount(
 
 async def delete_savings_goal(goal_id: str, confirm: str) -> dict[str, Any]:
     """IRREVERSIBLE. Deletes a savings goal. `confirm` must exactly equal the
-    goal's current name (fresh get_budgets read; unknown ids are refused)."""
+    goal's current name (fresh get_budgets read in its default window --
+    previous month through next month's start; unknown ids, and goals not
+    visible in that window, are refused)."""
     _require_writes("delete_savings_goal")
     name = await _savings_goal_name(goal_id, "delete_savings_goal")
     _require_confirm(

@@ -271,7 +271,7 @@ async def test_delete_transaction_rule_sends_bare_id(fake_client):
         "deleteTransactionRule": {"deleted": False, "errors": None}
     }
     _seed_reads(fake_client)
-    result = await writes.delete_transaction_rule("rule123", "rule123")
+    result = await writes.delete_transaction_rule("rule123", "acme")
     assert _mutation_calls(fake_client) == [("Common_DeleteTransactionRule", {"id": "rule123"})]
     # `deleted: False` even on success is a known API quirk -- must be
     # passed through as-is, not "corrected" to True.
@@ -284,7 +284,7 @@ async def test_delete_transaction_rule_defaults_missing_deleted_to_false(fake_cl
         "deleteTransactionRule": {"errors": None}
     }
     _seed_reads(fake_client)
-    result = await writes.delete_transaction_rule("rule123", "rule123")
+    result = await writes.delete_transaction_rule("rule123", "acme")
     assert result == {"deleted_flag": False}
 
 
@@ -295,7 +295,9 @@ def _seed_reads(fake_client):
     r["Common_GetHouseholdTransactionTags"] = {
         "householdTransactionTags": [{"id": "t1", "name": "Vacation"}]
     }
-    r["Web_GetTransactionRules"] = {"transactionRules": [{"id": "rule123"}]}
+    r["Web_GetTransactionRules"] = {"transactionRules": [{
+        "id": "rule123",
+        "merchantNameCriteria": [{"operator": "contains", "value": "acme"}]}]}
     r["Web_GetTransactionDrawer"] = {
         "getTransaction": {
             "id": "t1", "amount": -5.0, "date": "2026-09-01",
@@ -440,7 +442,7 @@ async def test_delete_transaction_sends_wrapped_id(fake_client):
         "deleteTransaction": {"deleted": True, "errors": None}
     }
     _seed_reads(fake_client)
-    result = await writes.delete_transaction("t1", "Coffee Shop")
+    result = await writes.delete_transaction("t1", "Coffee Shop -5.00")
     assert _mutation_calls(fake_client) == [
         ("Common_DeleteTransactionMutation", {"input": {"transactionId": "t1"}})
     ]
@@ -453,7 +455,7 @@ async def test_delete_transaction_defaults_missing_deleted_to_false(fake_client)
         "deleteTransaction": {"errors": None}
     }
     _seed_reads(fake_client)
-    result = await writes.delete_transaction("t1", "Coffee Shop")
+    result = await writes.delete_transaction("t1", "Coffee Shop -5.00")
     assert result == {"deleted_flag": False}
 
 

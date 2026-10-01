@@ -13,14 +13,18 @@ exported via `recon export-session`.
 
 Writes: every write tool is refused unless the server's environment sets
 MONARCH_CLIENT_ENABLE_WRITES=1 (see monarch_client/gate.py). On top of that
-master switch, every destructive tool (delete_transaction, delete_tag,
-delete_transaction_rule, delete_category_group, delete_savings_goal,
-delete_account, mark_stream_as_not_recurring) takes a REQUIRED `confirm` that
-must echo the target as returned by a fresh read, and the wide-blast-radius
-flags (set_budget_amount / set_flex_budget_amount /
-set_savings_goal_budget_amount with apply_to_future=True,
-create_transaction_rule with apply_to_existing_transactions=True) require
-`confirm` too. Every tool wrapper below passes its arguments to the
+master switch, each of the 8 destructive tools (delete_transaction, delete_tag,
+delete_transaction_rule, delete_category_group, delete_category,
+delete_savings_goal, delete_account, mark_stream_as_not_recurring) takes a
+REQUIRED `confirm` that must echo a value taken from a fresh read made inside
+the tool (the target's name; for delete_transaction "<merchant> <amount>"; for
+delete_transaction_rule the rule's first criterion value), and the
+wide-blast-radius flags require `confirm` too: set_budget_amount (category
+name) / set_savings_goal_budget_amount (goal name) / set_flex_budget_amount
+(the current flex amount for the month) with apply_to_future=True, and
+create_transaction_rule / update_transaction_rule with
+apply_to_existing_transactions=True (the fresh preview's match count). The
+confirm proves the caller looked at the target; it is not authentication. Every tool wrapper below passes its arguments to the
 monarch_client function BY KEYWORD, so a reordered signature can never
 silently route a value to the wrong parameter (tests/test_server_tools.py
 asserts the mapping).
@@ -340,8 +344,12 @@ async def create_transaction_rule(
 async def delete_transaction_rule(rule_id: str, confirm: str) -> dict[str, Any]:
     """
     Delete a transaction rule by id (from get_transaction_rules). IRREVERSIBLE.
-    A rule has no name, so confirm is REQUIRED and must equal the rule's id
-    (checked against a fresh read; unknown ids are refused). Note: the API's
+    A rule has no name and its id is already rule_id, so confirm is REQUIRED and
+    must equal the rule's first merchant-name criterion value, else its first
+    original-statement criterion value, else its set-category action's category
+    name, else "rule <id>" -- read it from get_transaction_rules (the tool
+    re-reads it itself; an unknown id or a mismatch is refused). This proves you
+    looked at the rule; it is not unique (the id picks the rule). Note: the API's
     `deleted` flag is unreliable (returns False even on success; only an actual
     failure raises an error) -- verify by calling get_transaction_rules again.
     """
@@ -402,9 +410,12 @@ async def delete_transaction(transaction_id: str, confirm: str) -> dict[str, Any
     Delete a transaction by id. Works on any transaction this account can see
     (manual or bank-synced), same as the real app's delete button -- not limited to
     ones created via create_transaction. There is no undo. confirm is REQUIRED and
-    must exactly equal the transaction's merchant name (its id if it has no
-    merchant) as returned by get_transaction_details, which the tool re-reads
-    itself; an unknown id or a mismatch is refused before anything is sent. Only
+    must exactly equal "<merchant name> <amount>" -- the merchant name, one
+    space, then the signed amount with two decimals, e.g. "Amazon -12.34" (an
+    expense) or "Acme Payroll 2500.00" (a credit); with no merchant, just the
+    amount ("-12.34") -- from get_transaction_details, which the tool re-reads
+    itself (merchant names repeat, so the amount is what pins the transaction); an
+    unknown id or a mismatch is refused before anything is sent. Only
     call when the user explicitly asked to delete that specific transaction.
     """
     return await client_writes.delete_transaction(
@@ -544,16 +555,21 @@ async def update_category(
 @mcp.tool()
 async def delete_category(
     category_id: str,
+    confirm: str,
     move_to_category_id: Optional[str] = None,
     uncategorize_transactions: bool = False,
 ) -> dict[str, Any]:
-    """Delete a category. You must say what happens to its transactions: pass
+    """Delete a category. IRREVERSIBLE. confirm is REQUIRED and must exactly
+    equal the category's current name (case-sensitive; checked against a fresh
+    get_categories read; unknown ids are refused). You must also say what
+    happens to its transactions: pass
     move_to_category_id to reassign them, or uncategorize_transactions=True to
     knowingly leave them Uncategorized (budget history for the category is
     lost either way). With neither (or both) the call is refused before
     anything is sent. Returns {deleted, errors}."""
     return await client_writes_categories.delete_category(
-        category_id, move_to_category_id=move_to_category_id,
+        category_id=category_id, confirm=confirm,
+        move_to_category_id=move_to_category_id,
         uncategorize_transactions=uncategorize_transactions)
 
 
@@ -588,7 +604,11 @@ async def update_merchant(
     recurring_frequency (e.g. 'monthly') and recurring_base_date (ISO date);
     recurring_amount is negative for expenses. Renaming onto another EXISTING
     merchant's name is rejected by Monarch (this cannot merge merchants); to
-    merge, rename the transactions with update_transaction."""
+    merge, rename the transactions with update_transaction.
+    default_category_application_mode: leave unset in normal use. Only
+    "new_and_edits" (or the merchant's current mode) is accepted; other modes
+    are unverified and one may retroactively re-categorize every existing
+    transaction of the merchant, so they are refused."""
     return await client_writes_categories.update_merchant(
         merchant_id=merchant_id, name=name, default_category_id=default_category_id,
         clear_default_category=clear_default_category,
@@ -616,7 +636,10 @@ async def update_account(
     """Edit a MANUAL (non-bank-linked) account. Only the fields you pass change;
     everything else is preserved. notes="" clears notes. account_type and
     account_subtype must be passed together (a pair from get_account_type_options).
-    Bank-linked accounts are refused. Requires writes enabled."""
+    Bank-linked accounts are refused, and so are LIABILITY accounts (loans,
+    credit cards, mortgages...): every update resends `recurrence: {}`, which
+    might clear an existing payment recurrence there (unverified), so edit
+    those in the Monarch web app. Requires writes enabled."""
     return await client_writes_accounts.update_account(
         account_id=account_id, name=name, display_balance=display_balance,
         notes=notes, account_type=account_type, account_subtype=account_subtype,
@@ -656,8 +679,10 @@ async def set_flex_budget_amount(amount: float, month: str,
                                  confirm: Optional[str] = None) -> dict:
     """Set the flexible-spending budget total for one month (month = 'YYYY-MM-01').
     apply_to_future defaults to False; True overwrites all later months too, and
-    then confirm is REQUIRED and must equal month (e.g. '2026-10-01'). confirm is
-    ignored when apply_to_future is False."""
+    then confirm is REQUIRED and must equal the flex amount currently planned for
+    that month, with two decimals (e.g. '250.00'; '0.00' if unset), which the tool
+    reads fresh from get_budgets (budgetData.monthlyAmountsForFlexExpense) -- look
+    at it before overwriting. confirm is ignored when apply_to_future is False."""
     return await client_writes_accounts.set_flex_budget_amount(
         amount=amount, month=month, apply_to_future=apply_to_future, confirm=confirm)
 
@@ -695,7 +720,9 @@ async def set_savings_goal_budget_amount(goal_id: str, amount: float, month: str
     """Set the budgeted monthly contribution to a savings goal (month = 'YYYY-MM-01').
     apply_to_future defaults to False; True overwrites all later months too, and
     then confirm is REQUIRED and must exactly equal the goal's current name
-    (fresh get_budgets read). confirm is ignored when apply_to_future is False."""
+    (fresh get_budgets read in its default window, previous month through next
+    month's start; a goal not visible there is refused). confirm is ignored when
+    apply_to_future is False."""
     return await client_writes_accounts.set_savings_goal_budget_amount(
         goal_id=goal_id, amount=amount, month=month, apply_to_future=apply_to_future,
         account_id=account_id, confirm=confirm)
@@ -705,6 +732,8 @@ async def set_savings_goal_budget_amount(goal_id: str, amount: float, month: str
 async def delete_savings_goal(goal_id: str, confirm: str) -> dict:
     """IRREVERSIBLE: permanently deletes a savings goal and its contribution
     history. confirm is REQUIRED and must exactly equal the goal's current name
+    (looked up in get_budgets' default window, previous month through next
+    month's start; a goal not visible there is refused)
     (checked against a fresh get_budgets read; unknown ids are refused). Only call
     when the user explicitly asked to delete that goal."""
     return await client_writes_accounts.delete_savings_goal(goal_id=goal_id, confirm=confirm)
@@ -747,6 +776,7 @@ async def update_transaction_rule(
     link_savings_goal_id: str | None = None,
     split_action: dict | None = None,
     apply_to_existing_transactions: bool = False,
+    confirm: str | None = None,
 ) -> dict[str, Any]:
     """Update an existing transaction rule (WRITE). Same criteria/actions as
     create_transaction_rule plus add_tag_ids, set_hide_from_reports,
@@ -757,7 +787,12 @@ async def update_transaction_rule(
     criterion and one action. split_action = {"splits": [{"percent": 60,
     "category_id": ..., "merchant_name": ..., "hide_from_reports": ...}, ...]}
     with percents summing to exactly 100 (percentage splits only). set_merchant_name
-    must exactly match an existing merchant. The response has no rule in it:
+    must exactly match an existing merchant. apply_to_existing_transactions=True
+    re-runs the rule over every matching HISTORICAL transaction and REQUIRES
+    confirm=str(N), N = the number of existing transactions the merged rule
+    matches (the tool previews the merged criteria itself and refuses unless
+    confirm equals totalCount) -- run preview_transaction_rule first, check the
+    count with the user, then echo it; ignored when False. The response has no rule in it:
     confirm with get_transaction_rules. `errors` non-null (even an empty
     object, flagged with a `hint`) means the update was rejected."""
     return await client_writes_splits_rules.update_transaction_rule(
@@ -769,7 +804,8 @@ async def update_transaction_rule(
         review_status=review_status, needs_review_by_user_id=needs_review_by_user_id,
         link_goal_id=link_goal_id, link_savings_goal_id=link_savings_goal_id,
         split_action=split_action,
-        apply_to_existing_transactions=apply_to_existing_transactions)
+        apply_to_existing_transactions=apply_to_existing_transactions,
+        confirm=confirm)
 
 
 if __name__ == "__main__":
