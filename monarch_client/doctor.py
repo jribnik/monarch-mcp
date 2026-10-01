@@ -85,7 +85,8 @@ async def _check_smoke_call() -> bool:
         await client.aclose()
 
     me = data.get("me") or {}
-    print(f"[ok]   Common_GetMe: id={me.get('id')!r} email={me.get('email')!r}")
+    # Deliberately NOT the email: this output is routinely pasted into chat.
+    print(f"[ok]   Common_GetMe: id={me.get('id')!r}")
     return True
 
 

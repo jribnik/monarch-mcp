@@ -27,6 +27,8 @@ speculatively.
 
 from __future__ import annotations
 
+import time
+from email.utils import parsedate_to_datetime
 from typing import Any, Optional
 
 import httpx
@@ -83,22 +85,43 @@ def _looks_like_cloudflare_block(resp: httpx.Response) -> bool:
     )
 
 
+def _parse_retry_after(value: Optional[str]) -> Optional[float]:
+    """Retry-After is either delta-seconds or an HTTP-date (RFC 9110). Return
+    seconds to wait, or None if absent/unparseable -- a malformed header must
+    never turn a clean 429 into a raw ValueError."""
+    if not value:
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        pass
+    try:
+        when = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, when.timestamp() - time.time())
+
+
 async def _post(
     op_name: str, query_text: str, variables: dict[str, Any], material: auth.AuthMaterial
 ) -> httpx.Response:
     client = _get_http_client()
-    # httpx deprecates per-request `cookies=`; set them on the client
-    # instance instead. Harmless to re-set on every call.
-    client.cookies.update(material.cookies)
+    # The Cookie header is built from THIS call's auth material and the
+    # shared client's jar is cleared afterwards. Using the jar instead (as an
+    # earlier version did) leaked cookies across a mid-process
+    # MONARCH_CLIENT_SITE switch (site A's cookies kept riding along on site
+    # B's requests) and let a server Set-Cookie silently replace the
+    # exported session value on later calls. An explicit Cookie header takes
+    # precedence over the jar in httpx/urllib.
+    headers = _build_headers(material)
+    headers["Cookie"] = "; ".join(f"{k}={v}" for k, v in material.cookies.items())
     body = {"operationName": op_name, "variables": variables, "query": query_text}
     try:
-        return await client.post(
-            GRAPHQL_URL,
-            json=body,
-            headers=_build_headers(material),
-        )
+        return await client.post(GRAPHQL_URL, json=body, headers=headers)
     except httpx.RequestError as e:
         raise MonarchTransportError(f"{op_name}: request failed ({e})") from e
+    finally:
+        client.cookies.clear()
 
 
 async def execute(
@@ -134,7 +157,7 @@ async def execute(
         retry_after = resp.headers.get("Retry-After")
         raise MonarchRateLimited(
             f"{op_name}: rate limited (429)",
-            retry_after=float(retry_after) if retry_after else None,
+            retry_after=_parse_retry_after(retry_after),
         )
 
     if _looks_like_cloudflare_block(resp):
@@ -164,6 +187,12 @@ async def execute(
             f"{op_name}: response was not valid JSON: {resp.text[:500]!r}"
         ) from e
 
+    if not isinstance(payload, dict):
+        raise MonarchTransportError(
+            f"{op_name}: response JSON was {type(payload).__name__}, expected "
+            f"an object: {resp.text[:500]!r}"
+        )
+
     errors = payload.get("errors")
     if errors:
         raise MonarchGraphQLError(
@@ -174,4 +203,9 @@ async def execute(
             partial_data=payload.get("data"),
         )
 
-    return payload.get("data") or {}
+    data = payload.get("data") or {}
+    if not isinstance(data, dict):
+        raise MonarchTransportError(
+            f"{op_name}: response `data` was {type(data).__name__}, expected an object"
+        )
+    return data

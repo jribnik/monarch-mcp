@@ -102,7 +102,10 @@ def _export_command(current_site: str) -> str:
 def _parse_dt(value: Optional[str]) -> Optional[datetime]:
     if not value:
         return None
-    dt = datetime.fromisoformat(value)
+    try:
+        dt = datetime.fromisoformat(value)
+    except (ValueError, TypeError) as e:
+        raise MonarchAuthError(f"unparseable timestamp {value!r}") from e
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
@@ -131,9 +134,13 @@ def _read_cache() -> AuthMaterial:
             expires_at=_parse_dt(payload.get("expires_at")),
             exported_at=_parse_dt(payload.get("exported_at")),
         )
-    except KeyError as e:
+    except (KeyError, TypeError, ValueError, MonarchAuthError) as e:
+        # KeyError: a required field is missing; TypeError/ValueError: the
+        # JSON has the wrong shape (e.g. cookies is a list); MonarchAuthError:
+        # _parse_dt rejected a timestamp. All mean "re-export the file".
+        what = f"missing {e}" if isinstance(e, KeyError) else str(e)
         raise MonarchAuthError(
-            f"auth file at {path} is malformed (missing {e}) -- delete it "
+            f"auth file at {path} is malformed ({what}) -- delete it "
             f"and re-run\nrun: {export_cmd}"
         ) from e
 

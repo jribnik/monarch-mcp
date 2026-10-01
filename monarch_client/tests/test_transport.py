@@ -187,3 +187,87 @@ async def test_client_call_passes_provenance_to_graphql_error(monkeypatch):
     assert err.query_hash == operations.PROVENANCE["Common_GetMe"].get(
         "catalog_query_hash"
     )
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_retry_after_http_date(monkeypatch):
+    """Retry-After may be an HTTP-date; that must not raise a raw ValueError."""
+    from email.utils import format_datetime
+    from datetime import datetime, timedelta, timezone
+
+    when = datetime.now(timezone.utc) + timedelta(seconds=120)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, headers={"Retry-After": format_datetime(when, usegmt=True)})
+
+    _install_mock(monkeypatch, handler)
+
+    with pytest.raises(MonarchRateLimited) as exc_info:
+        await transport.execute("Common_GetMe", "query {}", {})
+    assert 60 < exc_info.value.retry_after <= 120
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_garbage_retry_after_is_none(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, headers={"Retry-After": "soon-ish"})
+
+    _install_mock(monkeypatch, handler)
+
+    with pytest.raises(MonarchRateLimited) as exc_info:
+        await transport.execute("Common_GetMe", "query {}", {})
+    assert exc_info.value.retry_after is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", ["[1, 2]", '"str"', "5", "null"])
+async def test_non_object_json_body_raises_transport_error(monkeypatch, body):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body, headers={"content-type": "application/json"})
+
+    _install_mock(monkeypatch, handler)
+
+    with pytest.raises(MonarchTransportError, match="expected an object"):
+        await transport.execute("Common_GetMe", "query {}", {})
+
+
+@pytest.mark.asyncio
+async def test_non_object_data_raises_transport_error(monkeypatch):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [1]})
+
+    _install_mock(monkeypatch, handler)
+
+    with pytest.raises(MonarchTransportError, match="`data`"):
+        await transport.execute("Common_GetMe", "query {}", {})
+
+
+@pytest.mark.asyncio
+async def test_cookies_do_not_leak_across_calls_or_sites(monkeypatch):
+    """Each request sends exactly its own call's auth cookies: nothing from a
+    previous site's material, and a server Set-Cookie must not replace the
+    exported session value on the next call."""
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers.get("cookie", ""))
+        return httpx.Response(
+            200, json={"data": {}}, headers={"Set-Cookie": "session_id=from-server; Path=/"}
+        )
+
+    material_a = auth.AuthMaterial(
+        cookies={"session_id": "A", "only_a": "1"},
+        headers={"User-Agent": "ua"}, expires_at=None, exported_at=None,
+    )
+    material_b = auth.AuthMaterial(
+        cookies={"session_id": "B"},
+        headers={"User-Agent": "ua"}, expires_at=None, exported_at=None,
+    )
+    transport._http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    for material in (material_a, material_a, material_b):
+        monkeypatch.setattr(auth, "load", lambda m=material: m)
+        await transport.execute("Common_GetMe", "query {}", {})
+
+    assert seen[0] == "session_id=A; only_a=1"
+    assert seen[1] == "session_id=A; only_a=1"  # not "from-server"
+    assert seen[2] == "session_id=B"  # no only_a from the previous site
