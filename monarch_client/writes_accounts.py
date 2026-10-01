@@ -268,6 +268,13 @@ async def update_account(
         "hideFromList": bool(cur.get("hideFromList")),
         "hideInBudget": bool(cur.get("hideInBudget")),
         "hideTransactionsFromReports": bool(cur.get("hideTransactionsFromReports")),
+        # Resent as the web app itself sends them for a manual account (see
+        # api-recon's captured-mutations-2026-09-30.json, Common_UpdateAccount).
+        # synced=False is correct because _require_manual above guarantees a
+        # manual account. recurrence={} is what the UI sent for an account with
+        # no recurrence; Common_GetAccountForEdit selects no recurrence field,
+        # so an EXISTING one cannot be read back and would be cleared -- not
+        # verified either way for an account that has one.
         "synced": False,
         "apr": cur.get("apr"),
         "excludeFromDebtPaydown": bool(cur.get("excludeFromDebtPaydown")),
@@ -408,14 +415,32 @@ async def create_savings_goal(
     )
     result = create_savings_goals_result(data)
     goals = (result.get("createSavingsGoals") or {}).get("savingsGoals") or []
-    if goals and (target_amount is not None or target_date is not None or is_sinking_fund):
-        upd = await update_savings_goal(
-            goals[0]["id"],
-            target_amount=target_amount,
-            target_date=target_date,
-            is_sinking_fund=True if is_sinking_fund else None,
+    wants_follow_up = target_amount is not None or target_date is not None or is_sinking_fund
+    if wants_follow_up and not goals:
+        result["followUpError"] = (
+            "the create response contained no goal, so target_amount/target_date/"
+            "is_sinking_fund were NOT applied -- check the result's `errors`, then "
+            "look the goal up in get_budgets before retrying"
         )
-        result["followUpUpdate"] = upd
+    elif wants_follow_up:
+        # The goal now EXISTS. If this follow-up raises, letting the exception
+        # propagate would lose the new goal's id (the caller sees only an
+        # error and may create a duplicate), so report it alongside the
+        # created goal instead and let the caller retry update_savings_goal.
+        try:
+            result["followUpUpdate"] = await update_savings_goal(
+                goals[0]["id"],
+                target_amount=target_amount,
+                target_date=target_date,
+                is_sinking_fund=True if is_sinking_fund else None,
+            )
+        except Exception as e:  # noqa: BLE001 - any failure must keep the created goal
+            result["followUpError"] = (
+                f"goal {goals[0].get('id')!r} WAS created, but applying "
+                f"target_amount/target_date/is_sinking_fund failed: "
+                f"{type(e).__name__}: {e} -- retry with update_savings_goal on "
+                "that id; do not call create_savings_goal again"
+            )
     return result
 
 
@@ -426,10 +451,13 @@ async def update_savings_goal(
     target_date: Optional[str] = None,
     is_sinking_fund: Optional[bool] = None,
 ) -> dict[str, Any]:
-    """Update a savings goal; only the fields passed are sent."""
+    """Update a savings goal; only the fields passed are sent. name must not
+    be empty (a blank name would blank the goal's title)."""
     _require_writes("update_savings_goal")
     if all(v is None for v in (name, target_amount, target_date, is_sinking_fund)):
         raise ValueError("update_savings_goal: nothing to change.")
+    if name is not None and not name.strip():
+        raise ValueError("update_savings_goal: name must not be empty.")
     if target_amount is not None:
         _check_amount(target_amount)
     if target_date is not None and not _valid_date(target_date):

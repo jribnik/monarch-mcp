@@ -337,3 +337,42 @@ async def test_display_balance_only_on_manual(fake):
     with pytest.raises(ValueError, match="bank-linked|manual"):
         await wa.update_account("a1", display_balance=1)
     assert _mutations(fake) == []
+
+
+@pytest.mark.asyncio
+async def test_create_savings_goal_followup_failure_keeps_created_goal(fake, monkeypatch):
+    """M14: the goal exists once the create call returns. If the follow-up
+    update raises, the caller must still get the new goal's id back."""
+    fake.responses["Common_CreateSavingsGoals"] = {
+        "createSavingsGoals": {"savingsGoals": [{"id": "g1", "type": "savings"}], "errors": None}
+    }
+
+    real_call = fake.call
+
+    async def flaky(op_name, variables):
+        if op_name == "Common_UpdateSavingsGoal":
+            raise errors.MonarchTransportError("Common_UpdateSavingsGoal: request failed (boom)")
+        return await real_call(op_name, variables)
+
+    monkeypatch.setattr(fake, "call", flaky)
+    r = await wa.create_savings_goal("Trip", target_amount=100)
+    assert r["createSavingsGoals"]["savingsGoals"][0]["id"] == "g1"
+    assert "followUpUpdate" not in r
+    assert "g1" in r["followUpError"] and "boom" in r["followUpError"]
+    assert "update_savings_goal" in r["followUpError"]
+
+
+@pytest.mark.asyncio
+async def test_create_savings_goal_followup_wanted_but_no_goal_returned(fake):
+    fake.responses["Common_CreateSavingsGoals"] = {"createSavingsGoals": {"savingsGoals": [], "errors": None}}
+    r = await wa.create_savings_goal("Trip", target_amount=100)
+    assert "NOT applied" in r["followUpError"]
+    assert [c[0] for c in fake.calls] == ["Common_CreateSavingsGoals"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["", "   "])
+async def test_update_savings_goal_rejects_empty_name(fake, name):
+    with pytest.raises(ValueError, match="name must not be empty"):
+        await wa.update_savings_goal("g1", name=name)
+    assert fake.calls == []

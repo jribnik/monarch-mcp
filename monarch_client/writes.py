@@ -62,6 +62,7 @@ that it's actually gone.
 
 from __future__ import annotations
 
+import math
 from typing import Any, Optional
 
 from . import MonarchClient, gate, operations, project
@@ -408,19 +409,26 @@ async def _update_transaction(
     reviewed: Optional[bool] = None,
 ) -> dict[str, Any]:
     """Shared by recategorize_transaction and update_transaction -- same
-    mutation, same field-name mapping verified live against
-    monarch-sandbox (see operations/__init__.py's PROVENANCE note: `name`
-    for merchant, not `merchantName`; amount/date only sent when truthy,
-    matching keithah/monarchmoney-enhanced@159d36e monarchmoney/monarchmoney.py's own guard against the
-    API rejecting empty values for those two fields)."""
+    mutation, same field-name mapping verified live (see
+    operations/__init__.py's PROVENANCE note: `name` for merchant, not
+    `merchantName`). Only fields that are not None are sent; an update that
+    would send nothing but the id is refused."""
     input_: dict[str, Any] = {"id": transaction_id}
     if category_id is not None:
         input_["category"] = category_id
     if merchant_name is not None:
         input_["name"] = merchant_name
-    if amount:
+    if amount is not None:
+        # `is not None`, not truthiness: amount=0 is a real value that an
+        # earlier `if amount:` silently dropped, sending {id} alone while
+        # reporting success.
+        if isinstance(amount, bool) or not isinstance(amount, (int, float)) \
+                or not math.isfinite(amount):
+            raise ValueError(f"update_transaction: amount={amount!r} must be a finite number")
         input_["amount"] = amount
-    if date:
+    if date is not None:
+        if not date:
+            raise ValueError("update_transaction: date must not be empty")
         input_["date"] = date
     if hide_from_reports is not None:
         input_["hideFromReports"] = bool(hide_from_reports)
@@ -440,6 +448,12 @@ async def _update_transaction(
         input_["reviewed"] = True
     if notes is not None:
         input_["notes"] = notes
+
+    if len(input_) == 1:
+        raise ValueError(
+            "update_transaction: nothing to change -- pass at least one field "
+            "besides transaction_id"
+        )
 
     data = await _call(
         "Web_TransactionDrawerUpdateTransaction",

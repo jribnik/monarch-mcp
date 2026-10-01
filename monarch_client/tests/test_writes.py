@@ -495,13 +495,35 @@ async def test_update_transaction_maps_merchant_name_to_name_field(fake_client):
 
 
 @pytest.mark.asyncio
-async def test_update_transaction_ignores_falsy_amount_and_date(fake_client):
+async def test_update_transaction_sends_zero_amount(fake_client):
+    """amount=0 is a real value, not "unset" (an earlier `if amount:` dropped
+    it and sent {id} alone while reporting success)."""
     fake_client.responses["Web_TransactionDrawerUpdateTransaction"] = {
         "updateTransaction": {"transaction": {"id": "t1"}, "errors": None}
     }
-    await writes.update_transaction("t1", amount=0, date="")
+    await writes.update_transaction("t1", amount=0)
     _, variables = fake_client.calls[0]
-    assert variables["input"] == {"id": "t1"}
+    assert variables["input"] == {"id": "t1", "amount": 0}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kwargs", [
+    {}, {"category_id": None},  # nothing to change
+])
+async def test_update_transaction_rejects_noop(fake_client, kwargs):
+    with pytest.raises(ValueError, match="nothing to change"):
+        await writes.update_transaction("t1", **kwargs)
+    assert fake_client.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kwargs", [
+    {"date": ""}, {"amount": float("nan")}, {"amount": float("inf")}, {"amount": True},
+])
+async def test_update_transaction_rejects_bad_amount_or_date(fake_client, kwargs):
+    with pytest.raises(ValueError):
+        await writes.update_transaction("t1", **kwargs)
+    assert fake_client.calls == []
 
 
 @pytest.mark.asyncio
