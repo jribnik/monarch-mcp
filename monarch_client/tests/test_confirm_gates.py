@@ -179,6 +179,11 @@ async def test_delete_transaction_refused_without_usable_amount(fake, amount):
       "originalStatementCriteria": [{"value": "ACME CO"}]}, "acme"),
     ({"id": "r2", "originalStatementCriteria": [{"value": "ACME CO"}]}, "ACME CO"),
     ({"id": "r2", "merchantCriteria": [{"value": "legacy"}]}, "legacy"),
+    # merchantCriteria's real shape is uncaptured: a single object must work too
+    ({"id": "r2", "merchantCriteria": {"operator": "contains", "value": "legacy"}}, "legacy"),
+    ({"id": "r2", "merchantCriteria": {"operator": "contains"},
+      "setCategoryAction": {"name": "Dining"}}, "Dining"),
+    ({"id": "r2", "merchantCriteria": "weird"}, "rule r2"),
     ({"id": "r2", "amountCriteria": {"operator": "gt"},
       "setCategoryAction": {"name": "Dining"}}, "Dining"),
     ({"id": "r2", "amountCriteria": {"operator": "gt"}}, "rule r2"),
@@ -245,7 +250,7 @@ async def test_set_budget_amount_apply_to_future_ok_and_unknown_category(fake):
 
 
 @pytest.mark.asyncio
-async def test_flex_budget_apply_to_future_requires_month(fake):
+async def test_flex_budget_apply_to_future_requires_current_amount(fake):
     with pytest.raises(ValueError, match="confirm"):
         await wa.set_flex_budget_amount(5, "2026-10-01", apply_to_future=True)
     with pytest.raises(ValueError, match="confirm"):
@@ -308,14 +313,45 @@ async def test_create_rule_apply_to_existing_refused_without_preview_count(fake)
 
 
 @pytest.mark.asyncio
-async def test_flex_apply_to_future_refused_when_month_missing_or_null(fake):
+async def test_flex_apply_to_future_refused_when_month_missing(fake):
     fake.responses["Common_GetJointPlanningData"] = {
         "budgetData": {"monthlyAmountsForFlexExpense": {"monthlyAmounts": []}}}
     with pytest.raises(ValueError, match="wasn't found"):
         await wa.set_flex_budget_amount(5, "2026-10-01", apply_to_future=True, confirm="0.00")
-    fake.responses["Common_GetJointPlanningData"] = {
-        "budgetData": {"monthlyAmountsForFlexExpense": {"monthlyAmounts": [
-            {"month": "2026-10-01", "plannedCashFlowAmount": None}]}}}
+    assert fake.mutations() == []
+
+
+def _flex(amount, **extra):
+    entry = {"month": "2026-10-01", **extra}
+    if amount is not _MISSING:
+        entry["plannedCashFlowAmount"] = amount
+    return {"budgetData": {"monthlyAmountsForFlexExpense": {"monthlyAmounts": [entry]}}}
+
+
+_MISSING = object()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", [None, _MISSING, "abc", float("nan"), float("inf"), True, [1]])
+async def test_flex_apply_to_future_refused_on_unusable_amount(fake, bad):
+    fake.responses["Common_GetJointPlanningData"] = _flex(bad)
+    for confirm in ("0.00", "NaN", "Infinity", "1.00", "None"):
+        with pytest.raises(ValueError, match="NOT proceeding"):
+            await wa.set_flex_budget_amount(5, "2026-10-01", apply_to_future=True, confirm=confirm)
+    assert fake.mutations() == []
+
+
+@pytest.mark.parametrize("raw,token", [
+    (0, "0.00"), (0.0, "0.00"), (-0.0, "0.00"), ("-0.00", "0.00"), (250, "250.00"),
+    (250.5, "250.50"), ("12.345", "12.34"), (0.125, "0.12"), (-3.5, "-3.50"),
+])
+def test_flex_amount_token_formats(raw, token):
+    assert wa._flex_amount_token(_flex(raw), "2026-10-01") == token
+
+
+@pytest.mark.asyncio
+async def test_flex_apply_to_future_real_zero_is_zero_token(fake):
+    fake.responses["Common_GetJointPlanningData"] = _flex(0)
     await wa.set_flex_budget_amount(5, "2026-10-01", apply_to_future=True, confirm="0.00")
     assert len(fake.mutations()) == 1
 

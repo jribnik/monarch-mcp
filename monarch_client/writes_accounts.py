@@ -36,7 +36,7 @@ from __future__ import annotations
 import datetime
 import math
 import re
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 
 from . import reads
@@ -130,7 +130,11 @@ PROVENANCE_ENTRIES: dict[str, dict] = {
     "Common_UpdateFlexBudgetMutation": _prov(
         "Common_UpdateFlexBudgetMutation",
         "backs set_flex_budget_amount. Sandbox UI capture 2026-09-30; input "
-        "{startDate, amount, applyToFuture}. Meant for Flex budget mode.",
+        "{startDate, amount, applyToFuture}. Meant for Flex budget mode. The "
+        "apply_to_future confirm reads the current amount from "
+        "Common_GetJointPlanningData budgetData.monthlyAmountsForFlexExpense."
+        "monthlyAmounts[month].plannedCashFlowAmount, confirmed against a live "
+        "read on 2026-10-01 (field present, numeric).",
     ),
     "Common_CreateSavingsGoals": _prov(
         "Common_CreateSavingsGoals",
@@ -432,15 +436,40 @@ def _flex_amount_token(budgets: dict[str, Any], month: str) -> str:
     """The flex budget amount currently planned for `month`, from a fresh
     get_budgets read (budgetData.monthlyAmountsForFlexExpense.monthlyAmounts
     [month == month].plannedCashFlowAmount), as a string with exactly two
-    decimals ("250.00"; a month whose planned amount is null reads as
-    "0.00"). Raises if the month is absent from the read."""
+    decimals ("250.00"; a genuine 0 reads "0.00"). Rounding is half-even.
+
+    The field mapping was confirmed against a live read on 2026-10-01 (the
+    section is present with budgetVariability "flexible", 3 months, and a
+    numeric non-null plannedCashFlowAmount for each). Fails closed: a missing
+    month, or a null / missing / bool / non-numeric / non-finite amount,
+    raises ValueError rather than reading as "0.00", so a caller can never
+    pass the gate by echoing a value that was not really shown. Bad-value
+    handling mirrors writes.transaction_confirm_token (finite check, bool
+    check, InvalidOperation, never "-0.00")."""
     flex = ((budgets.get("budgetData") or {}).get("monthlyAmountsForFlexExpense") or {})
     for entry in flex.get("monthlyAmounts") or []:
-        if (entry or {}).get("month") == month:
-            planned = entry.get("plannedCashFlowAmount")
-            if planned is None:
-                planned = 0
-            return f"{Decimal(str(planned)).quantize(Decimal('0.01'))}"
+        if (entry or {}).get("month") != month:
+            continue
+        planned = entry.get("plannedCashFlowAmount")
+        if isinstance(planned, bool) or not isinstance(planned, (int, float, str)):
+            raise ValueError(
+                f"set_flex_budget_amount: the flex budget for {month!r} has no "
+                f"readable plannedCashFlowAmount ({planned!r}) -- NOT proceeding, "
+                "since the amount being overwritten can't be shown."
+            )
+        try:
+            d = Decimal(str(planned))
+            if not d.is_finite():
+                raise InvalidOperation
+            d = d.quantize(Decimal("0.01"))
+        except InvalidOperation:
+            raise ValueError(
+                f"set_flex_budget_amount: unreadable plannedCashFlowAmount "
+                f"{planned!r} for {month!r} -- NOT proceeding."
+            ) from None
+        if d == 0:
+            d = abs(d)  # never "-0.00"
+        return str(d)
     raise ValueError(
         f"set_flex_budget_amount: month {month!r} wasn't found in the flex "
         "budget read (get_budgets budgetData.monthlyAmountsForFlexExpense) -- "
@@ -458,9 +487,11 @@ async def set_flex_budget_amount(
     (month = 'YYYY-MM-01'). With apply_to_future=True it also overwrites all
     LATER months, so `confirm` is then required and must equal the flex
     amount CURRENTLY planned for `month`, formatted with two decimals (e.g.
-    "250.00"; "0.00" if unset), read fresh from get_budgets for that month --
-    i.e. the caller must have seen the number it is about to overwrite. Not
-    needed for a single month."""
+    "250.00"), read fresh from get_budgets for that month -- i.e. the caller
+    must have seen the number it is about to overwrite. If the read has no
+    numeric amount for that month the call is refused (fail closed). The
+    field mapping was confirmed against a live read on 2026-10-01 (field
+    present, numeric). Not needed for a single month."""
     _require_writes("set_flex_budget_amount")
     _check_month(month)
     _check_amount(amount)

@@ -346,8 +346,8 @@ async def delete_transaction_rule(rule_id: str, confirm: str) -> dict[str, Any]:
     Delete a transaction rule by id (from get_transaction_rules). IRREVERSIBLE.
     A rule has no name and its id is already rule_id, so confirm is REQUIRED and
     must equal the rule's first merchant-name criterion value, else its first
-    original-statement criterion value, else its set-category action's category
-    name, else "rule <id>" -- read it from get_transaction_rules (the tool
+    original-statement criterion value, else its first merchantCriteria value,
+    else its set-category action's category name, else "rule <id>" -- read it from get_transaction_rules (the tool
     re-reads it itself; an unknown id or a mismatch is refused). This proves you
     looked at the rule; it is not unique (the id picks the rule). Note: the API's
     `deleted` flag is unreliable (returns False even on success; only an actual
@@ -680,9 +680,11 @@ async def set_flex_budget_amount(amount: float, month: str,
     """Set the flexible-spending budget total for one month (month = 'YYYY-MM-01').
     apply_to_future defaults to False; True overwrites all later months too, and
     then confirm is REQUIRED and must equal the flex amount currently planned for
-    that month, with two decimals (e.g. '250.00'; '0.00' if unset), which the tool
-    reads fresh from get_budgets (budgetData.monthlyAmountsForFlexExpense) -- look
-    at it before overwriting. confirm is ignored when apply_to_future is False."""
+    that month, with two decimals (e.g. '250.00'), which the tool
+    reads fresh from get_budgets (budgetData.monthlyAmountsForFlexExpense;
+    mapping confirmed against a live read on 2026-10-01, field present and
+    numeric) -- look at it before overwriting. If that read has no numeric
+    amount for the month the call is refused rather than treated as 0.00. confirm is ignored when apply_to_future is False."""
     return await client_writes_accounts.set_flex_budget_amount(
         amount=amount, month=month, apply_to_future=apply_to_future, confirm=confirm)
 

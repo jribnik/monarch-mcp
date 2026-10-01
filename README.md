@@ -138,7 +138,7 @@ Then restart Claude Code so it connects. Ask things like:
 | `create_tag` | **write** | create a new tag |
 | `delete_tag` | **write, destructive** | delete a tag; needs `confirm` = the tag's name |
 | `create_transaction_rule` | **write** | create an auto-categorization rule (incl. renaming merchants); `apply_to_existing_transactions=True` needs `confirm=str(count)` of a fresh preview |
-| `delete_transaction_rule` | **write, destructive** | delete a rule; needs `confirm` = its first criterion value / category name (see Security) |
+| `delete_transaction_rule` | **write, destructive** | delete a rule; needs `confirm` = its first merchant-name / original-statement / `merchantCriteria` value, else its category name, else `rule <id>` (see Security) |
 | `mark_stream_as_not_recurring` | **write, destructive** | dismiss a recurring stream; needs `confirm` = its merchant name |
 | `create_transaction` | **write** | create a manual transaction; manual accounts only (fail-closed: anything not positively identified as manual is refused) |
 | `delete_transaction` | **write, destructive** | delete a transaction (bank-synced too); needs `confirm` = `"<merchant> <amount>"`, e.g. `Amazon -12.34` (just the amount if no merchant) |
@@ -178,9 +178,9 @@ Then restart Claude Code so it connects. Ask things like:
 
      | Tool | `confirm` must equal |
      |------|----------------------|
-     | `delete_transaction` | `"<merchant name> <amount>"`: the merchant name, one space, the signed amount with two decimals, e.g. `Amazon -12.34` or `Acme Payroll 2500.00`; with no merchant, just the amount (`-12.34`). The merchant name alone isn't unique, the amount is what pins the transaction |
+     | `delete_transaction` | `"<merchant name> <amount>"`: the merchant name, one space, the signed amount with two decimals, e.g. `Amazon -12.34` or `Acme Payroll 2500.00`; with no merchant, just the amount (`-12.34`). The merchant name alone isn't unique, the amount is what pins the transaction. Amounts round half-even; the name is compared exactly (no Unicode normalization, exact spacing); a mismatch refuses and shows the expected value |
      | `delete_tag` | the tag's name |
-     | `delete_transaction_rule` | the rule's first merchant-name criterion value, else its first original-statement criterion value, else its set-category action's category name, else `rule <id>` (from `get_transaction_rules`). Rules have no name and their id is already the `rule_id` argument, so this only proves the rule was read; it is not unique, the id picks the rule |
+     | `delete_transaction_rule` | the rule's first merchant-name criterion value, else its first original-statement criterion value, else its first `merchantCriteria` value, else its set-category action's category name, else `rule <id>` (from `get_transaction_rules`). Rules have no name and their id is already the `rule_id` argument, so this only proves the rule was read; it is not unique, the id picks the rule |
      | `delete_category_group` | the group's name |
      | `delete_category` | the category's name (it also needs `move_to_category_id` or `uncategorize_transactions=True`) |
      | `delete_savings_goal` | the goal's name |
@@ -198,7 +198,9 @@ Then restart Claude Code so it connects. Ask things like:
      `apply_to_future=True` (the category / goal name),
      `set_flex_budget_amount(apply_to_future=True)` (the flex amount currently
      planned for that month, two decimals, e.g. `250.00`, from a fresh
-     `get_budgets` read), and
+     `get_budgets` read; the field mapping was confirmed against a live read
+     on 2026-10-01 (field present, numeric), and a missing / null /
+     non-numeric amount refuses rather than reading as `0.00`), and
      `create_transaction_rule` / `update_transaction_rule` with
      `apply_to_existing_transactions=True` (the number of existing
      transactions the rule will change, from a fresh preview of the rule's

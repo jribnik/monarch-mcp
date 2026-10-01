@@ -375,8 +375,18 @@ def rule_confirm_token(rule: dict[str, Any]) -> str:
     "amazon"); the target is still pinned by rule_id -- the gate only proves
     the caller looked at the rule it is about to delete."""
     for key in ("merchantNameCriteria", "originalStatementCriteria", "merchantCriteria"):
-        for crit in rule.get(key) or []:
-            value = (crit or {}).get("value")
+        crits = rule.get(key) or []
+        # No api-recon capture shows merchantCriteria's real shape, so accept a
+        # list of criteria or a single criterion object (iterating a dict would
+        # yield key strings and make such a rule undeletable).
+        if isinstance(crits, dict):
+            crits = [crits]
+        elif not isinstance(crits, list):
+            continue
+        for crit in crits:
+            if not isinstance(crit, dict):
+                continue
+            value = crit.get("value")
             if isinstance(value, str) and value:
                 return value
     category = (rule.get("setCategoryAction") or {}).get("name")
@@ -388,8 +398,9 @@ def rule_confirm_token(rule: dict[str, Any]) -> str:
 async def delete_transaction_rule(rule_id: str, confirm: str) -> dict[str, Any]:
     """IRREVERSIBLE. A rule has no name and its id is already the rule_id
     argument, so `confirm` must instead equal rule_confirm_token(rule): the
-    rule's first merchant-name / original-statement criterion value, else its
-    set-category action's category name, else "rule <id>", taken from a fresh
+    rule's first merchant-name criterion value, else its first
+    original-statement criterion value, else its first merchantCriteria value,
+    else its set-category action's category name, else "rule <id>", taken from a fresh
     get_transaction_rules read. The gate proves the caller read this rule
     (and an unknown id is refused); it does not make the target unique -- the
     id does that."""
@@ -456,8 +467,11 @@ def transaction_confirm_token(txn: dict[str, Any]) -> str:
     """What delete_transaction's `confirm` must equal: "<merchant name>
     <amount>" with the amount signed, fixed to two decimals and last, e.g.
     "Amazon -12.34" (expense) or "Acme Payroll 2500.00" (credit); when the
-    transaction has no merchant, just the amount ("-12.34"). Built from a
-    fresh get_transaction_details read. The merchant name alone isn't unique
+    transaction has no merchant, just the amount ("-12.34"). The amount is
+    rounded half-even; the merchant name is compared exactly as read -- no
+    Unicode normalization, exact spacing. A mismatch refuses the call and the
+    error shows the expected value (a confirm is not authentication, see the
+    README). Built from a fresh get_transaction_details read. The merchant name alone isn't unique
     (every Amazon purchase shares it), so the amount is what pins it to this
     transaction. Raises ValueError if the read has no usable amount (the gate
     fails closed rather than falling back to something weaker)."""
