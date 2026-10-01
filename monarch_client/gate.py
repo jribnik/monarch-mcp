@@ -9,6 +9,11 @@ reads and the dry-run preview_transaction_rule are unaffected. Added
 allowlist) and skylight_client (hard gates), monarch_client had no gate at
 all, and delete_transaction/delete_tag/delete_transaction_rule act on the
 real, bank-synced account.
+
+This is only the coarse, all-or-nothing layer. Within it, every destructive
+tool also requires a per-call `confirm` that must echo its target as returned
+by a fresh read (writes._require_confirm; added after the 2026-10-01 review,
+when all 30 write tools were live globally with only delete_account gated).
 """
 
 from __future__ import annotations

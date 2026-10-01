@@ -1,12 +1,13 @@
 """
-The 10 read-side MCP tools defined in this module (11 at the tool level: the
-README table also counts preview_transaction_rule, a dry-run that lives in
-writes.py), reimplemented on monarch_client instead of
-monarchmoney-enhanced.
+The 10 read-side MCP tools defined in this module (11 read-side tools at the
+tool level: the README table also counts preview_transaction_rule, a dry-run
+that lives in writes.py), built on monarch_client; the legacy
+monarchmoney-enhanced backend they once ran alongside is gone.
 
 Each function's signature mirrors its server.py counterpart exactly (same
-parameter names/defaults) so server.py's `backend.dispatch()` can call
-either implementation interchangeably (see M3). Variable-building follows
+parameter names/defaults); server.py calls them by keyword, and
+tests/test_server_tools.py asserts the argument mapping. These reads are also
+the "fresh reads" behind the confirm gates in writes*.py. Variable-building follows
 the vendored library's own conventions where they're a known-working match
 for the real app's query (filters.categories/.accounts/.tags, hasNotes/
 isSplit -- cross-checked in keithah/monarchmoney-enhanced@159d36e monarchmoney/monarchmoney.py's

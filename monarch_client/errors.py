@@ -1,7 +1,7 @@
 """
 Exception hierarchy for monarch_client.
 
-Kept deliberately specific: a caller (server.py's backend dispatch, or a
+Kept deliberately specific: a caller (server.py's tools, or a
 human running `doctor`) needs to tell "your login expired, go run `recon
 login monarch`" apart from "Cloudflare blocked this request" apart from
 "the query is wrong" apart from "the network is down" -- each has a
@@ -117,8 +117,10 @@ class MonarchWriteBlocked(MonarchError):
     "1"). Same spirit as sleeper_client's SleeperWriteBlocked and
     skylight_client's SkylightWriteBlocked (whose `gate` attribute this
     mirrors), but Monarch has no sandbox-league/allowlist analogue: the
-    blast radius of a write here is the whole real account, so the one
-    master switch is deliberately the only gate."""
+    blast radius of a write here is the whole real account, so this master
+    switch is a single all-or-nothing gate, not an allowlist. (Destructive
+    tools additionally refuse, with a ValueError rather than this exception,
+    unless given a `confirm` matching a fresh read -- see writes._require_confirm.)"""
 
     def __init__(self, message: str, gate: str = "enabled"):
         super().__init__(message)

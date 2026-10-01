@@ -6,7 +6,7 @@ Split-transaction and update-rule write tools (added 2026-09-30).
 
 Both operations were captured from the live web app on 2026-09-30 (see
 api-recon's captured-mutations-2026-09-30.json) and verified live against the
-disposable monarch-sandbox account; see each PROVENANCE note in
+disposable monarch-sandbox account (since deleted; dated history); see each PROVENANCE note in
 PROVENANCE_ENTRIES below. Conventions match writes.py: `_require_writes(tool)`
 first, then `_call`, response passed through project-style (Monarch's own
 `errors` payload is surfaced as-is, not raised).

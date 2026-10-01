@@ -13,11 +13,15 @@ checklist.
 
 PROVENANCE records, per operation, what was true at vendoring time:
   - catalog_query_hash: the hash api-recon's catalog assigned this query's
-    text (computed over its own REDACTED form -- see below). `doctor`
-    compares this against the live catalog to flag when a re-vendor is due.
+    text (computed over its own REDACTED form -- see below). api-recon's
+    nightly drift-watch compares this against its live catalog to flag when
+    a re-vendor is due (via `python -m monarch_client.operations
+    --provenance-json`; `doctor` no longer does this comparison).
   - vendored_sha256: sha256 of this file's query text (header stripped) as
-    committed here. tests/test_operations.py asserts this still matches, so
-    an accidental hand-edit doesn't silently drift from what was reviewed.
+    committed here. tests/test_operations.py asserts this still matches, and
+    verify_integrity() (run before every call) refuses a file whose hash no
+    longer matches OR that has no entry here at all, so an accidental
+    hand-edit or an unrecorded new file can't silently be sent.
   - hand_repaired: True if api-recon's literal-redaction (its
     QUERY_LITERAL_PLACEHOLDER for strings, plus int/float literals silently
     zeroed with no placeholder at all) clobbered a real value in this
@@ -30,14 +34,24 @@ PROVENANCE records, per operation, what was true at vendoring time:
     because it's a MUTATION, but not always: a couple of entries (see each
     one's own note) are plain queries that just happen to only ever get
     triggered by a UI flow (e.g. manual-account creation) the walk doesn't
-    visit. Either way `doctor`'s drift check treats a permanent "not in
+    visit. Either way api-recon's drift check treats a permanent "not in
     current catalog" result as expected and prints [skip] rather than
-    [warn]. Distinct from catalog_query_hash being None (a deliberate
-    hand-picked subset, never catalog-exported at all): every
-    walk_reachable=False operation DOES have a real hash, recorded from
-    when it was genuinely vendored via `recon export-ops` -- it just can't
-    be re-confirmed by a walk that only performs reads. Every other entry
-    omits this key; its absence means "reachable", not "unreachable".
+    [warn]. Not the same as catalog_query_hash being None (a deliberate
+    hand-picked subset, never catalog-exported at all): the ops vendored via
+    `recon export-ops` (including most mutations here) have a real hash
+    recorded at vendoring time that a read-only walk just can't re-confirm,
+    whereas the hand-recovered ops and the 2026-09-30 UI-capture ops
+    (PROVENANCE_ENTRIES in writes_categories.py / writes_accounts.py /
+    writes_splits_rules.py) have catalog_query_hash None AND
+    walk_reachable False. Every other entry omits the key; its absence means
+    "reachable", not "unreachable". (operations.__main__ forces it False for
+    any mutation-kind op regardless.)
+
+Where entries live: the 2026-09-28 and earlier ops are in PROVENANCE below;
+the three 2026-09-30 write modules keep their own PROVENANCE_ENTRIES (their
+ops are described next to the code that uses them) and monarch_client/
+__init__.py merges them into PROVENANCE at import. Every .graphql file in
+this directory MUST have an entry, from one place or the other.
 """
 
 from __future__ import annotations
@@ -96,9 +110,11 @@ PROVENANCE: dict[str, dict] = {
         "hand_repaired": False,
         "note": (
             "backs get_tags; called with variables {'includeTransactionCount': "
-            "False}. The `tags:list` walk step is selector-rotted as of "
-            "2026-09-24 -- this op has NO nightly drift coverage right now "
-            "(see D5 in the design notes / doctor's catalog-drift check)."
+            "False}. History: the `tags:list` walk step intermittently reported "
+            "'not observed' around 2026-09-24, briefly leaving this op looking "
+            "uncovered; that was a false alarm in api-recon's step "
+            "bookkeeping, fixed in api-recon #7, and the op is under normal "
+            "nightly drift coverage."
         ),
     },
     "Common_GetJointPlanningData": {
@@ -223,7 +239,7 @@ PROVENANCE: dict[str, dict] = {
     "Common_CreateTransactionRuleMutationV2": {
         "catalog_query_hash": "ae5c96e2335256ff62d0e9527b51b3630d59b5960699aacbf30ea74591a132b6",
         # A mutation -- the nightly read-only walk can never re-observe it in
-        # the live catalog, so doctor.py's drift check treats a "not in
+        # the live catalog, so api-recon's drift check treats a "not in
         # current catalog" result here as expected, not a warning. Found
         # 2026-09-28: this and 4 other write ops had been firing a permanent
         # nightly [warn] since vendoring, exactly the "crying wolf" failure
@@ -270,7 +286,9 @@ PROVENANCE: dict[str, dict] = {
             "update_transaction, which recategorize_transaction is itself a "
             "thin wrapper around). Field-name mapping confirmed live against "
             "monarch-sandbox: category->'category', merchant_name->'name' "
-            "(NOT 'merchantName'), amount/date only sent when truthy, "
+            "(NOT 'merchantName'), amount/date sent whenever not None (an "
+            "earlier truthiness check silently dropped amount=0; a call that "
+            "would send only the id is refused), "
             "hide_from_reports->'hideFromReports', needs_review->'needsReview', "
             "notes->'notes', reviewed=True->'reviewed' (the web app's Mark-as-reviewed "
             "button; sets reviewStatus='reviewed', distinct from needsReview=False; "
@@ -304,8 +322,9 @@ PROVENANCE: dict[str, dict] = {
         "runs_seen": [],
         "hand_repaired": False,
         "note": (
-            "backs mark_stream_as_not_recurring -- the last write tool, "
-            "completing full 8/8 write coverage. NOT captured via `recon "
+            "backs mark_stream_as_not_recurring (one of the original 8 write "
+            "tools; the tool surface has since grown to 30 -- see README.md). "
+            "NOT captured via `recon "
             "export-ops`: Monarch's recurring-stream detection is a backend "
             "batch process, not real-time, so a real stream had to be "
             "created via the UI's manual 'mark merchant as recurring' "
@@ -381,7 +400,7 @@ PROVENANCE: dict[str, dict] = {
             "walk_reachable=False because it was only ever observed "
             "incidentally during a mutation-focused capture run, not by the "
             "read-only nightly walk -- not because it's a mutation itself "
-            "(it's a query); doctor.py's drift check would just show a "
+            "(it's a query); api-recon's drift check would just show a "
             "spurious [warn] otherwise since the nightly walk never visits "
             "the manual-account-creation UI flow that triggers it."
         ),
@@ -413,8 +432,11 @@ PROVENANCE: dict[str, dict] = {
             "bogus id returns a real `errors.message` (\"Account matching "
             "query does not exist.\" / \"Category matching query does not "
             "exist.\") with transaction=null, verified live 2026-09-28 -- so "
-            "no extra client-side validation gate was added here, unlike "
-            "_verify_merchant_name_exists()."
+            "no client-side EXISTENCE check was added, unlike "
+            "_verify_merchant_name_exists(). It does not reject a valid but "
+            "bank-synced accountId, so create_transaction first runs the "
+            "fail-closed writes._require_manual gate on a fresh "
+            "Common_GetAccountForEdit read."
         ),
     },
     "Web_CreateManualAccount": {

@@ -8,8 +8,9 @@ notes' D7): the REQUEST always sends the app's verbatim vendored query
 meaningful); the RESPONSE gets projected here into a stable, Claude-facing
 shape.
 
-Most of these operations turn out to share the old monarchmoney-enhanced
-library's field names almost exactly (both talk to the same underlying
+Most of these operations turn out to share the field names of the legacy
+monarchmoney-enhanced library (removed 2026-09-28; its output shapes are the
+compatibility target) almost exactly (both talk to the same underlying
 schema) -- those projectors are near pass-throughs, documented as such.
 Two are materially different because the app's own UI groups data
 differently than the library's hand-written queries did:
@@ -128,10 +129,10 @@ def create_transaction_rule_result(data: dict[str, Any]) -> dict[str, Any]:
     `transactionRule` does NOT: the real app's own query (verbatim vendored)
     only selects `errors`, not `transactionRule { id }` the way the
     library's hand-authored version does -- so the new rule's id is simply
-    not available from this mutation's response on the client backend.
-    `transactionRule` is still included, set to None, so both backends
-    return the same top-level keys; a caller that needs the new id must
-    call get_transaction_rules() and match on the criteria it just set."""
+    not available from this mutation's response. `transactionRule` is still
+    included, set to None, so the result keeps the legacy library's
+    top-level keys; a caller that needs the new id must call
+    get_transaction_rules() and match on the criteria it just set."""
     result = data.get("createTransactionRuleV2") or {}
     return {
         "createTransactionRuleV2": {
@@ -157,22 +158,21 @@ def set_transaction_tags_result(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def mark_stream_as_not_recurring_result(data: dict[str, Any]) -> dict[str, Any]:
-    """Matches server.py's own wrapping (`{"success": ok}`), not a raw
-    pass-through -- server.py already reshapes the library's boolean
-    return this way. Verified live against monarch-sandbox: a real stream
-    was created, marked not-recurring (success:true), and confirmed gone
-    via a follow-up get_recurring_transactions call."""
+    """Reshaped to `{"success": ok}` (the legacy library returned a bare
+    boolean) rather than a raw pass-through. Verified live (against the since-
+    deleted monarch-sandbox account): a real stream was created, marked
+    not-recurring (success:true), and confirmed gone via a follow-up
+    get_recurring_transactions call."""
     success = (data.get("markStreamAsNotRecurring") or {}).get("success", False)
     return {"success": success}
 
 
 def delete_transaction_rule_result(data: dict[str, Any]) -> dict[str, Any]:
-    """Matches server.py's own wrapping (`{"deleted_flag": ok}`), not a
-    raw pass-through -- server.py already reshapes the library's boolean
-    return this way. `deleted` is unreliable and reads False even on a
-    successful delete (verified live 2026-09-24, twice) -- this is a
-    known, pre-existing quirk of the API itself, not something either
-    backend can fix; see server.py's delete_transaction_rule docstring."""
+    """Reshaped to `{"deleted_flag": ok}` (the legacy library returned a bare
+    boolean) rather than a raw pass-through. `deleted` is unreliable and reads
+    False even on a successful delete (verified live 2026-09-24, twice) --
+    a quirk of the API itself that nothing client-side can fix; see
+    server.py's delete_transaction_rule docstring."""
     deleted = (data.get("deleteTransactionRule") or {}).get("deleted", False)
     return {"deleted_flag": deleted}
 
@@ -214,7 +214,7 @@ def create_transaction_result(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def delete_transaction_result(data: dict[str, Any]) -> dict[str, Any]:
-    """Matches server.py's own wrapping (`{"deleted_flag": ok}`), same
+    """Reshaped to `{"deleted_flag": ok}`, same
     convention as delete_transaction_rule_result. Unlike that op, `deleted`
     reads true correctly on success here -- verified live against
     monarch-sandbox 2026-09-28 (a follow-up get_transaction_details call

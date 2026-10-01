@@ -14,8 +14,16 @@ Deliberately NOT built: Common_CreateBudgetForHousehold and
 Common_UpdateBudgetSettings (too easy to clobber a real budget).
 
 All operations were captured from the sandbox web app on 2026-09-30 and
-verified live against the disposable monarch-sandbox account; see each
-PROVENANCE entry's note.
+verified live against the disposable monarch-sandbox account (since deleted --
+that is dated history, not a current testing path); see each PROVENANCE
+entry's note.
+
+Safety: account edits/deletes go through the fail-closed _require_manual gate
+(shared from writes.py). delete_account (confirm_name) and delete_savings_goal
+(confirm) require the target's exact current name, and the three budget tools
+require a `confirm` when apply_to_future=True (category / goal name, or the
+month for the flex budget) -- each checked against a fresh read, see
+writes._require_confirm.
 """
 
 from __future__ import annotations

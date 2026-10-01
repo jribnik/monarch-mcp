@@ -132,7 +132,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    label = "REAL account" if auth.site() == auth.DEFAULT_SITE else "sandbox/test account"
+    label = "REAL account" if auth.site() == auth.DEFAULT_SITE else "NON-DEFAULT site (test account)"
     print(f"Site: {auth.site()!r} ({label}) -- override with MONARCH_CLIENT_SITE")
 
     if args.op:

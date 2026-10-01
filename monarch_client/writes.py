@@ -1,63 +1,62 @@
 """
-Write-side MCP tools, reimplemented on monarch_client.
+Write-side MCP tools, built on monarch_client (plus the shared safety gates
+the sibling write modules import from here).
 
 Deliberately no generic "execute_mutation" escape hatch: only the vendored,
-named mutations below are callable, so a prompt-injection or a model
-mistake can't reach an arbitrary mutation. Each function's signature
-mirrors its server.py counterpart exactly, same as reads.py.
+named mutations are callable, so a prompt-injection or a model mistake can't
+reach an arbitrary mutation. Each function's signature mirrors its server.py
+counterpart exactly, same as reads.py.
 
-12 functions in this module (11 write tools at the tool level: the README table
-counts preview_transaction_rule, a dry-run, as a read) -- create_tag, delete_tag, preview_transaction_rule,
+This module: create_tag, delete_tag, preview_transaction_rule,
 create_transaction_rule, delete_transaction_rule, recategorize_transaction,
 update_transaction, set_transaction_tags, mark_stream_as_not_recurring,
-create_transaction, delete_transaction, create_manual_account -- each
-captured and/or verified against a dedicated, disposable monarch-sandbox
-account (see operations/__init__.py's PROVENANCE for each op's exact
-provenance; three -- delete_transaction_rule, mark_stream_as_not_recurring,
-and delete_transaction -- were verified by direct functional call rather
-than a UI-driven HAR capture, each documented as an explicit exception in
-its own .graphql file). See operations/README.md.
+create_transaction, delete_transaction, create_manual_account -- 12
+functions, 11 write tools (preview_transaction_rule is a dry-run query and is
+counted with the reads). The rest of the 30 write tools live in
+writes_categories.py (8), writes_accounts.py (8) and writes_splits_rules.py
+(3). See README.md for the full tool table and operations/__init__.py's
+PROVENANCE for each op's provenance.
 
-delete_tag was added 2026-09-28, closing a gap left open since the
-original 8-tool build (create_tag shipped with no delete counterpart) --
-added while monarch-sandbox still existed, ahead of its planned deletion
-(it's the safety net for developing/verifying any write, so remaining
-write-path work was prioritized while it was still available -- see
-project memory).
+Safety layers, outermost first:
+  1. gate.py's MONARCH_CLIENT_ENABLE_WRITES master switch, checked by every
+     tool (_require_writes) and again by _call / MonarchClient.call.
+  2. _require_confirm: destructive tools (delete_transaction, delete_tag,
+     delete_transaction_rule, mark_stream_as_not_recurring here; delete_account,
+     delete_category_group, delete_savings_goal in the sibling modules) take a
+     REQUIRED `confirm` that must echo the target as returned by a FRESH read
+     done inside the tool, and refuse before sending anything otherwise.
+     create_transaction_rule(apply_to_existing_transactions=True) and the
+     apply_to_future=True budget tools require one too.
+  3. Per-tool client-side validation: _require_manual (fail-closed
+     manual-account check for create_transaction/update_account/
+     delete_account) and _verify_merchant_name_exists (rule merchant names).
 
-set_merchant_name (preview/create_transaction_rule) was also added
-2026-09-28. Its real shape -- a merchant NAME string, not an id -- and the
-need for _verify_merchant_name_exists were both discovered by live testing
-against monarch-sandbox: setMerchantAction has no server-side validation at
-all and silently creates a brand-new garbage merchant named after whatever
-string it's given (reproduced with both a raw id and a typo'd name; preview
-doesn't catch it either -- its `newName` field just echoes the input back
-unresolved). See _verify_merchant_name_exists's docstring below.
+Verification history: the original write ops were captured from / verified
+against a dedicated, disposable monarch-sandbox account (api-recon site
+`monarch-sandbox`), which has since been DELETED -- the "verified live against
+monarch-sandbox" remarks in docstrings and PROVENANCE notes are dated history,
+not a testing path you can still use. A NEW write op must now be verified some
+other way (see operations/README.md, "Adding a write operation").
+Three ops -- delete_transaction_rule, mark_stream_as_not_recurring and
+delete_transaction -- were verified by direct functional call rather than a
+UI-driven capture, each documented as an explicit exception in its own
+.graphql file.
 
-create_transaction and create_manual_account were also added 2026-09-28,
-closing the last two capability gaps flagged by an earlier design review
-(manual transaction/account creation). Both mutations DO validate
-accountId/categoryId/type/subtype EXISTENCE server-side (a bad id raises
-or returns a real errors.message rather than silently succeeding, verified
-live) -- unlike setMerchantAction. But an Opus review the same day caught
-that Monarch's existence check doesn't catch a valid-but-wrong-KIND id: a
-real, bank-linked accountId passed to create_transaction wouldn't be
-rejected, and would create a phantom entry on a real bank feed that has no
-business being manually entered there regardless of whether it could later
-be deleted -- see _verify_account_is_manual, added as this function's own
-client-side gate. create_manual_account's type/subtype pair genuinely
-doesn't need one (verified live: an invalid pair raises).
-
-delete_transaction was added the same day (2026-09-28), closing
-create_transaction's own missing counterpart -- unlike the accountId gate
-above, this was a pure capability gap (no way to undo ANY mistaken
-transaction, not just ones on the wrong account kind), also flagged by the
-same Opus review. NOT captured via api-recon (never driven through its UI
-automation) -- recovered from the old abandoned monarchmoney-enhanced
-library's own hand-authored, long-production-tested query, same recovery
-pattern as delete_transaction_rule. Verified live against monarch-sandbox:
-created a real transaction, deleted it, confirmed via a follow-up read
-that it's actually gone.
+Gotchas discovered live and enforced here:
+  - setMerchantAction (preview/create_transaction_rule's set_merchant_name)
+    takes a merchant NAME string and has no server-side validation: a name
+    that doesn't exactly match an existing merchant silently CREATES a new
+    garbage merchant (preview doesn't catch it either; its `newName` just
+    echoes the input). Hence _verify_merchant_name_exists.
+  - create_transaction / create_manual_account DO validate accountId/
+    categoryId/type/subtype existence server-side, but Monarch does not
+    reject a valid-but-bank-synced accountId; hence the fail-closed
+    _require_manual gate (a phantom manual entry on a bank feed confuses that
+    account's balance/reconciliation even if it could later be deleted).
+  - delete_transaction works on any transaction, bank-synced included, same
+    as the web app's delete button, and has no undo -- hence its confirm gate.
+    (Its query was recovered from the legacy monarchmoney-enhanced library,
+    the same recovery pattern as delete_transaction_rule.)
 """
 
 from __future__ import annotations

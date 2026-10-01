@@ -5,12 +5,16 @@ Split out of writes.py (2026-09-30) so it can be developed independently;
 follows writes.py conventions exactly: every function calls
 _require_writes(<tool>) FIRST, then _call(...). The shared helpers are
 imported from .writes (not re-implemented) so monkeypatching
-`writes._client` in tests covers this module too.
+`writes._client` (and `reads._client`, for the fresh reads behind the confirm
+gates) in tests covers this module too.
 
 All eight operations were captured from the live web app against the
 disposable monarch-sandbox account on 2026-09-30 (api-recon UI capture,
 not catalog-exported; see PROVENANCE_ENTRIES below and operations/README.md)
-and verified live against that sandbox. No merchant DELETE is built
+and verified live against that sandbox (since deleted; dated history).
+delete_category_group requires a `confirm` equal to the group's name (fresh
+read, writes._require_confirm); delete_category's own move/uncategorize
+argument is its confirmation. No merchant DELETE is built
 (deliberately: Common_DeleteMerchant is destructive and out of scope).
 
 Error convention: like the other write results (project.delete_tag_result

@@ -129,7 +129,7 @@ class TestSiteIsolation:
 
         err = capsys.readouterr().err
         assert err.count("authenticating against site") == 2
-        assert "sandbox/test account" in err
+        assert "NON-DEFAULT site" in err
 
 
 class TestMalformedTimestamps:
