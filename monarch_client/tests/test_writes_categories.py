@@ -9,7 +9,7 @@ from importlib import resources
 
 import pytest
 
-from monarch_client import errors, operations, writes, writes_categories as wc
+from monarch_client import errors, operations, reads, writes, writes_categories as wc
 
 
 class _FakeClient:
@@ -27,6 +27,7 @@ def fake_client(monkeypatch):
     client = _FakeClient()
     monkeypatch.setenv(writes.WRITES_ENV, "1")
     monkeypatch.setattr(writes, "_client", client)
+    monkeypatch.setattr(reads, "_client", client)
     return client
 
 
@@ -35,7 +36,7 @@ def fake_client(monkeypatch):
 _ARGS = {
     "create_category_group": ("G",),
     "update_category_group": ("g1",),
-    "delete_category_group": ("g1",),
+    "delete_category_group": ("g1", "G"),
     "create_category": ("C", "g1"),
     "update_category": ("c1",),
     "delete_category": ("c1",),
@@ -106,12 +107,15 @@ async def test_delete_category_group_and_error_passthrough(fake_client):
                        "fieldErrors": None},
         }
     }
-    r = await wc.delete_category_group("g1")
-    assert fake_client.calls == [("Common_DeleteCategoryGroup", {"id": "g1"})]
+    fake_client.responses["Common_GetCategories"] = {
+        "categoryGroups": [{"id": "g1", "name": "Group One"}], "categories": [],
+    }
+    r = await wc.delete_category_group("g1", "Group One")
+    assert fake_client.calls[-1] == ("Common_DeleteCategoryGroup", {"id": "g1"})
     assert r["deleted"] is None
     assert r["errors"]["message"] == "Category group is not empty"
-    await wc.delete_category_group("g1", move_to_group_id="g2")
-    assert fake_client.calls[1][1] == {"id": "g1", "moveToGroupId": "g2"}
+    await wc.delete_category_group("g1", "Group One", move_to_group_id="g2")
+    assert fake_client.calls[-1][1] == {"id": "g1", "moveToGroupId": "g2"}
 
 
 # ---- categories -----------------------------------------------------------

@@ -25,7 +25,14 @@ import math
 import re
 from typing import Any, Optional
 
-from .writes import _call, _get_account_for_edit, _require_manual, _require_writes
+from . import reads
+from .writes import (
+    _call,
+    _get_account_for_edit,
+    _require_confirm,
+    _require_manual,
+    _require_writes,
+)
 
 TOOLS = [
     "update_account",
@@ -211,6 +218,20 @@ def _check_money(value: Any, label: str) -> None:
         raise ValueError(f"{label}={value!r} must be a finite number.")
 
 
+async def _savings_goal_name(goal_id: str, tool: str) -> Optional[str]:
+    """Name of a savings goal from a fresh get_budgets read (its
+    savingsGoalMonthlyBudgetAmounts[].savingsGoal). Raises if not found."""
+    budgets = await reads.get_budgets()
+    for entry in budgets.get("savingsGoalMonthlyBudgetAmounts") or []:
+        goal = (entry or {}).get("savingsGoal") or {}
+        if goal.get("id") == goal_id:
+            return goal.get("name")
+    raise ValueError(
+        f"{tool}: goal_id={goal_id!r} wasn't found among the savings goals in "
+        "get_budgets -- double-check the id."
+    )
+
+
 # --- accounts -------------------------------------------------------------
 
 async def update_account(
@@ -336,12 +357,27 @@ async def set_budget_amount(
     amount: float,
     month: str,
     apply_to_future: bool = False,
+    confirm: Optional[str] = None,
 ) -> dict[str, Any]:
     """Set one category's budget for one month (month = 'YYYY-MM-01'). With
-    apply_to_future=True the amount also carries to all LATER months."""
+    apply_to_future=True the amount also overwrites all LATER months, so
+    `confirm` is then required and must exactly equal the category's current
+    name (fresh get_categories read). Not needed for a single month."""
     _require_writes("set_budget_amount")
     _check_month(month)
     _check_amount(amount)
+    if apply_to_future:
+        cats = (await reads.get_categories()).get("categories") or []
+        cat = next((c for c in cats if c.get("id") == category_id), None)
+        if cat is None:
+            raise ValueError(
+                f"set_budget_amount: category_id={category_id!r} wasn't found in get_categories."
+            )
+        _require_confirm(
+            "set_budget_amount", confirm, [cat.get("name")],
+            f"the category's name {cat.get('name')!r} (apply_to_future=True "
+            "overwrites every later month's budget)",
+        )
     data = await _call(
         "Common_UpdateBudgetItem",
         {
@@ -361,12 +397,19 @@ async def set_flex_budget_amount(
     amount: float,
     month: str,
     apply_to_future: bool = False,
+    confirm: Optional[str] = None,
 ) -> dict[str, Any]:
     """Set the Flex-mode flexible-spending budget for one month
-    (month = 'YYYY-MM-01')."""
+    (month = 'YYYY-MM-01'). With apply_to_future=True it also overwrites all
+    LATER months, so `confirm` is then required and must equal `month`."""
     _require_writes("set_flex_budget_amount")
     _check_month(month)
     _check_amount(amount)
+    if apply_to_future:
+        _require_confirm(
+            "set_flex_budget_amount", confirm, [month],
+            "the month being set (apply_to_future=True overwrites every later month)",
+        )
     data = await _call(
         "Common_UpdateFlexBudgetMutation",
         {
@@ -481,12 +524,21 @@ async def set_savings_goal_budget_amount(
     month: str,
     apply_to_future: bool = False,
     account_id: Optional[str] = None,
+    confirm: Optional[str] = None,
 ) -> dict[str, Any]:
     """Set the monthly budgeted contribution to a savings goal
-    (month = 'YYYY-MM-01')."""
+    (month = 'YYYY-MM-01'). With apply_to_future=True it also overwrites all
+    LATER months, so `confirm` is then required and must exactly equal the
+    goal's name (fresh get_budgets read)."""
     _require_writes("set_savings_goal_budget_amount")
     _check_month(month)
     _check_amount(amount)
+    if apply_to_future:
+        name = await _savings_goal_name(goal_id, "set_savings_goal_budget_amount")
+        _require_confirm(
+            "set_savings_goal_budget_amount", confirm, [name],
+            f"the goal's name {name!r} (apply_to_future=True overwrites every later month)",
+        )
     data = await _call(
         "Common_SetSavingsGoalBudgetAmount",
         {
@@ -502,8 +554,13 @@ async def set_savings_goal_budget_amount(
     return set_savings_goal_budget_amount_result(data)
 
 
-async def delete_savings_goal(goal_id: str) -> dict[str, Any]:
-    """IRREVERSIBLE. Deletes a savings goal."""
+async def delete_savings_goal(goal_id: str, confirm: str) -> dict[str, Any]:
+    """IRREVERSIBLE. Deletes a savings goal. `confirm` must exactly equal the
+    goal's current name (fresh get_budgets read; unknown ids are refused)."""
     _require_writes("delete_savings_goal")
+    name = await _savings_goal_name(goal_id, "delete_savings_goal")
+    _require_confirm(
+        "delete_savings_goal", confirm, [name], f"the goal's name {name!r}"
+    )
     data = await _call("Common_DeleteSavingsGoal", {"input": {"id": goal_id}})
     return delete_savings_goal_result(data)

@@ -190,6 +190,30 @@ def _require_manual(account: dict[str, Any], tool: str) -> None:
         )
 
 
+def _require_confirm(
+    tool: str, confirm: Any, accepted: Any, target: str
+) -> None:
+    """Confirmation gate for destructive / wide-blast-radius writes.
+
+    All write tools are live whenever MONARCH_CLIENT_ENABLE_WRITES=1, so a
+    model mistake (wrong id, stale id, prompt injection) goes straight to the
+    real account. Each destructive tool therefore takes a REQUIRED `confirm`
+    argument that must exactly echo (case-sensitive) the target as returned
+    by a FRESH read performed inside the tool -- forcing the caller to have
+    looked at what it is about to destroy, and refusing a stale or mistyped
+    id. `accepted` is the set of acceptable echoes (falsy entries ignored);
+    the refusal names them so the caller can retry only after the user
+    has confirmed that specific target."""
+    options = sorted({a for a in accepted if a})
+    if not isinstance(confirm, str) or not confirm or confirm not in options:
+        raise ValueError(
+            f"{tool}: confirm={confirm!r} does not exactly match {target} "
+            f"(expected one of {options}) -- NOT proceeding. Only retry with "
+            "the exact value if the user has explicitly confirmed this "
+            "specific target."
+        )
+
+
 def _rule_input_common(
     *,
     merchant_name_criteria: Optional[list[dict[str, str]]],
@@ -237,13 +261,17 @@ async def create_tag(name: str, color: str) -> dict[str, Any]:
     return project.create_tag_result(data)
 
 
-async def delete_tag(tag_id: str) -> dict[str, Any]:
-    """Vendored 2026-09-28 (was previously a documented gap -- create_tag
-    with no delete counterpart). Verified live against monarch-sandbox:
-    created a real tag, deleted it via this mutation, confirmed via a
-    follow-up get_tags call the account was back to exactly its original
-    5 default tags."""
+async def delete_tag(tag_id: str, confirm: str) -> dict[str, Any]:
+    """Vendored 2026-09-28 (closing create_tag's missing counterpart);
+    verified live then: created a tag, deleted it, confirmed via a follow-up
+    get_tags call it was gone. `confirm` must exactly equal the tag's current
+    name, checked against a fresh get_tags read (unknown ids are refused)."""
     _require_writes("delete_tag")
+    tags = (await reads.get_tags()).get("householdTransactionTags") or []
+    tag = next((x for x in tags if x.get("id") == tag_id), None)
+    if tag is None:
+        raise ValueError(f"delete_tag: tag_id={tag_id!r} wasn't found in get_tags.")
+    _require_confirm("delete_tag", confirm, [tag.get("name")], f"the tag's name {tag.get('name')!r}")
     data = await _call("Common_DeleteHouseholdTransactionTag", {"tagId": tag_id})
     return project.delete_tag_result(data)
 
@@ -284,7 +312,13 @@ async def create_transaction_rule(
     set_category_action: Optional[str] = None,
     set_merchant_name: Optional[str] = None,
     apply_to_existing_transactions: bool = False,
+    confirm: Optional[str] = None,
 ) -> dict[str, Any]:
+    """With apply_to_existing_transactions=True the rule rewrites every
+    matching HISTORICAL transaction, so `confirm` is then required and must
+    equal str(totalCount) of a fresh preview of this exact rule -- i.e. the
+    caller must have looked at how many existing transactions it will change.
+    Ignored (not required) for a forward-only rule."""
     _require_writes("create_transaction_rule")
     if set_merchant_name is not None:
         await _verify_merchant_name_exists(set_merchant_name)
@@ -297,13 +331,43 @@ async def create_transaction_rule(
         set_category_action=set_category_action,
         set_merchant_name=set_merchant_name,
     )
+    if apply_to_existing_transactions:
+        preview = await _call(
+            "Common_PreviewTransactionRule",
+            {"rule": {**rule_input, "applyToExistingTransactions": False}, "offset": 0},
+        )
+        total = (project.preview_transaction_rule_result(preview)
+                 .get("transactionRulePreview") or {}).get("totalCount")
+        if total is None:
+            raise ValueError(
+                "create_transaction_rule: couldn't determine how many existing "
+                "transactions this rule matches (preview returned no totalCount) "
+                "-- NOT applying it retroactively."
+            )
+        _require_confirm(
+            "create_transaction_rule", confirm, [str(total)],
+            f"the number of existing transactions this rule would change ({total}); "
+            "pass confirm=str(that count) after running preview_transaction_rule",
+        )
     rule_input["applyToExistingTransactions"] = apply_to_existing_transactions
     data = await _call("Common_CreateTransactionRuleMutationV2", {"input": rule_input})
     return project.create_transaction_rule_result(data)
 
 
-async def delete_transaction_rule(rule_id: str) -> dict[str, Any]:
+async def delete_transaction_rule(rule_id: str, confirm: str) -> dict[str, Any]:
+    """A rule has no name, so `confirm` must equal the rule's id as found in
+    a fresh get_transaction_rules read (which also refuses unknown ids)."""
     _require_writes("delete_transaction_rule")
+    rules = (await reads.get_transaction_rules()).get("transactionRules") or []
+    rule = next((r for r in rules if str(r.get("id")) == str(rule_id)), None)
+    if rule is None:
+        raise ValueError(
+            f"delete_transaction_rule: rule_id={rule_id!r} wasn't found in "
+            "get_transaction_rules."
+        )
+    _require_confirm(
+        "delete_transaction_rule", confirm, [str(rule.get("id"))], "the rule's id"
+    )
     data = await _call("Common_DeleteTransactionRule", {"id": rule_id})
     return project.delete_transaction_rule_result(data)
 
@@ -349,7 +413,7 @@ async def create_transaction(
     return project.create_transaction_result(data)
 
 
-async def delete_transaction(transaction_id: str) -> dict[str, Any]:
+async def delete_transaction(transaction_id: str, confirm: str) -> dict[str, Any]:
     """Added 2026-09-28, closing create_transaction's missing counterpart --
     flagged as a real irreversibility gap by an Opus review (a mistaken
     manual transaction had no way to be undone through this server).
@@ -358,9 +422,23 @@ async def delete_transaction(transaction_id: str) -> dict[str, Any]:
     against monarch-sandbox: created a real transaction, deleted it,
     confirmed via a follow-up get_transaction_details call that it's
     actually gone. Works on any transaction this account can see, not just
-    manually-created ones -- same as the real web app's delete button --
-    so use with the same care as any other destructive write."""
+    manually-created ones, INCLUDING bank-synced transactions -- same as the
+    real web app's delete button -- so it is gated: `confirm` must exactly
+    equal the transaction's merchant name (or, for a transaction with no
+    merchant, its id) as returned by a FRESH get_transaction_details read.
+    An unknown id is refused."""
     _require_writes("delete_transaction")
+    txn = (await reads.get_transaction_details(transaction_id)).get("getTransaction")
+    if not txn:
+        raise ValueError(
+            f"delete_transaction: transaction_id={transaction_id!r} wasn't found."
+        )
+    merchant = (txn.get("merchant") or {}).get("name")
+    _require_confirm(
+        "delete_transaction", confirm, [merchant or str(txn.get("id") or transaction_id)],
+        f"the transaction's merchant name {merchant!r} (amount {txn.get('amount')}, "
+        f"date {txn.get('date')})",
+    )
     data = await _call(
         "Common_DeleteTransactionMutation", {"input": {"transactionId": transaction_id}}
     )
@@ -504,7 +582,28 @@ async def set_transaction_tags(transaction_id: str, tag_ids: list[str]) -> dict[
     return project.set_transaction_tags_result(data)
 
 
-async def mark_stream_as_not_recurring(stream_id: str) -> dict[str, Any]:
+async def mark_stream_as_not_recurring(stream_id: str, confirm: str) -> dict[str, Any]:
+    """`confirm` must exactly equal the stream's merchant name (or stream
+    name), checked against a fresh get_recurring_transactions read (current
+    month window); a stream not visible there is refused."""
     _require_writes("mark_stream_as_not_recurring")
+    items = (await reads.get_recurring_transactions()).get("recurring_items") or []
+    stream = next(
+        (
+            i["stream"] for i in items
+            if (i.get("stream") or {}).get("id") == stream_id
+        ),
+        None,
+    )
+    if stream is None:
+        raise ValueError(
+            f"mark_stream_as_not_recurring: stream_id={stream_id!r} wasn't found "
+            "in get_recurring_transactions (current month)."
+        )
+    _require_confirm(
+        "mark_stream_as_not_recurring", confirm,
+        [(stream.get("merchant") or {}).get("name"), stream.get("name")],
+        "the stream's merchant name",
+    )
     data = await _call("Common_MarkAsNotRecurring", {"streamId": stream_id})
     return project.mark_stream_as_not_recurring_result(data)

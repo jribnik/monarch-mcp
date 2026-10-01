@@ -25,7 +25,8 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Optional
 
-from .writes import _call, _require_writes
+from . import reads
+from .writes import _call, _require_confirm, _require_writes
 
 TOOLS = [
     "create_category_group",
@@ -255,12 +256,24 @@ async def update_category_group(
 
 
 async def delete_category_group(
-    group_id: str, move_to_group_id: Optional[str] = None
+    group_id: str, confirm: str, move_to_group_id: Optional[str] = None
 ) -> dict[str, Any]:
     """Delete a category group. If it still contains categories, pass
     move_to_group_id to re-home them; otherwise the server refuses a
-    non-empty group ("Category group is not empty"). Verified live against monarch-sandbox."""
+    non-empty group ("Category group is not empty"). `confirm` must exactly
+    equal the group's current name (fresh get_categories read; unknown ids
+    are refused)."""
     _require_writes("delete_category_group")
+    groups = (await reads.get_categories()).get("categoryGroups") or []
+    group = next((g for g in groups if g.get("id") == group_id), None)
+    if group is None:
+        raise ValueError(
+            f"delete_category_group: group_id={group_id!r} wasn't found in get_categories."
+        )
+    _require_confirm(
+        "delete_category_group", confirm, [group.get("name")],
+        f"the group's name {group.get('name')!r}",
+    )
     variables: dict[str, Any] = {"id": group_id}
     if move_to_group_id is not None:
         variables["moveToGroupId"] = move_to_group_id

@@ -60,8 +60,9 @@ async def test_delete_tag_sends_bare_tag_id(fake_client):
     fake_client.responses["Common_DeleteHouseholdTransactionTag"] = {
         "deleteTransactionTag": {"errors": None}
     }
-    result = await writes.delete_tag("t1")
-    assert fake_client.calls == [
+    _seed_reads(fake_client)
+    result = await writes.delete_tag("t1", "Vacation")
+    assert _mutation_calls(fake_client) == [
         ("Common_DeleteHouseholdTransactionTag", {"tagId": "t1"})
     ]
     assert result == {"deleteTransactionTag": {"errors": None}}
@@ -72,7 +73,11 @@ async def test_delete_tag_surfaces_errors(fake_client):
     fake_client.responses["Common_DeleteHouseholdTransactionTag"] = {
         "deleteTransactionTag": {"errors": [{"message": "Tag not found"}]}
     }
-    result = await writes.delete_tag("bogus")
+    _seed_reads(fake_client)
+    fake_client.responses["Common_GetHouseholdTransactionTags"] = {
+        "householdTransactionTags": [{"id": "bogus", "name": "Bogus"}]
+    }
+    result = await writes.delete_tag("bogus", "Bogus")
     assert result["deleteTransactionTag"]["errors"] == [{"message": "Tag not found"}]
 
 
@@ -216,12 +221,16 @@ async def test_create_transaction_rule_passes_apply_to_existing(fake_client):
     fake_client.responses["Common_CreateTransactionRuleMutationV2"] = {
         "createTransactionRuleV2": {"errors": None}
     }
+    fake_client.responses["Common_PreviewTransactionRule"] = {
+        "transactionRulePreview": {"totalCount": 42, "results": []}
+    }
     await writes.create_transaction_rule(
         original_statement_criteria=[{"operator": "contains", "value": "AMZN"}],
         set_category_action="cat2",
         apply_to_existing_transactions=True,
+        confirm="42",
     )
-    op_name, variables = fake_client.calls[0]
+    op_name, variables = fake_client.calls[-1]
     assert op_name == "Common_CreateTransactionRuleMutationV2"
     assert variables["input"]["applyToExistingTransactions"] is True
     assert variables["input"]["originalStatementCriteria"] == [
@@ -261,8 +270,9 @@ async def test_delete_transaction_rule_sends_bare_id(fake_client):
     fake_client.responses["Common_DeleteTransactionRule"] = {
         "deleteTransactionRule": {"deleted": False, "errors": None}
     }
-    result = await writes.delete_transaction_rule("rule123")
-    assert fake_client.calls == [("Common_DeleteTransactionRule", {"id": "rule123"})]
+    _seed_reads(fake_client)
+    result = await writes.delete_transaction_rule("rule123", "rule123")
+    assert _mutation_calls(fake_client) == [("Common_DeleteTransactionRule", {"id": "rule123"})]
     # `deleted: False` even on success is a known API quirk -- must be
     # passed through as-is, not "corrected" to True.
     assert result == {"deleted_flag": False}
@@ -273,8 +283,40 @@ async def test_delete_transaction_rule_defaults_missing_deleted_to_false(fake_cl
     fake_client.responses["Common_DeleteTransactionRule"] = {
         "deleteTransactionRule": {"errors": None}
     }
-    result = await writes.delete_transaction_rule("rule123")
+    _seed_reads(fake_client)
+    result = await writes.delete_transaction_rule("rule123", "rule123")
     assert result == {"deleted_flag": False}
+
+
+def _seed_reads(fake_client):
+    """Fresh-read responses the confirm gates consult (t1 / rule123 /
+    stream123 / tag t1 exist; names are what `confirm` must echo)."""
+    r = fake_client.responses
+    r["Common_GetHouseholdTransactionTags"] = {
+        "householdTransactionTags": [{"id": "t1", "name": "Vacation"}]
+    }
+    r["Web_GetTransactionRules"] = {"transactionRules": [{"id": "rule123"}]}
+    r["Web_GetTransactionDrawer"] = {
+        "getTransaction": {
+            "id": "t1", "amount": -5.0, "date": "2026-09-01",
+            "merchant": {"id": "m1", "name": "Coffee Shop"},
+        },
+        "myHousehold": None,
+    }
+    r["Common_GetAggregatedRecurringItems"] = {
+        "aggregatedRecurringItems": {
+            "groups": [{"results": [{"stream": {
+                "id": "stream123", "name": "Netflix Sub",
+                "merchant": {"id": "m9", "name": "Netflix"},
+            }}]}],
+            "aggregatedSummary": None,
+        }
+    }
+
+
+def _mutation_calls(fake_client):
+    from monarch_client import operations
+    return [c for c in fake_client.calls if operations.is_mutation(c[0])]
 
 
 def _account_for_edit(**overrides) -> dict:
@@ -397,8 +439,9 @@ async def test_delete_transaction_sends_wrapped_id(fake_client):
     fake_client.responses["Common_DeleteTransactionMutation"] = {
         "deleteTransaction": {"deleted": True, "errors": None}
     }
-    result = await writes.delete_transaction("t1")
-    assert fake_client.calls == [
+    _seed_reads(fake_client)
+    result = await writes.delete_transaction("t1", "Coffee Shop")
+    assert _mutation_calls(fake_client) == [
         ("Common_DeleteTransactionMutation", {"input": {"transactionId": "t1"}})
     ]
     assert result == {"deleted_flag": True}
@@ -409,7 +452,8 @@ async def test_delete_transaction_defaults_missing_deleted_to_false(fake_client)
     fake_client.responses["Common_DeleteTransactionMutation"] = {
         "deleteTransaction": {"errors": None}
     }
-    result = await writes.delete_transaction("t1")
+    _seed_reads(fake_client)
+    result = await writes.delete_transaction("t1", "Coffee Shop")
     assert result == {"deleted_flag": False}
 
 
@@ -589,8 +633,9 @@ async def test_mark_stream_as_not_recurring_sends_bare_stream_id(fake_client):
     fake_client.responses["Common_MarkAsNotRecurring"] = {
         "markStreamAsNotRecurring": {"success": True, "errors": None}
     }
-    result = await writes.mark_stream_as_not_recurring("stream123")
-    assert fake_client.calls == [
+    _seed_reads(fake_client)
+    result = await writes.mark_stream_as_not_recurring("stream123", "Netflix")
+    assert _mutation_calls(fake_client) == [
         ("Common_MarkAsNotRecurring", {"streamId": "stream123"})
     ]
     assert result == {"success": True}
@@ -601,7 +646,8 @@ async def test_mark_stream_as_not_recurring_defaults_missing_success_to_false(fa
     fake_client.responses["Common_MarkAsNotRecurring"] = {
         "markStreamAsNotRecurring": {"errors": None}
     }
-    result = await writes.mark_stream_as_not_recurring("stream123")
+    _seed_reads(fake_client)
+    result = await writes.mark_stream_as_not_recurring("stream123", "Netflix")
     assert result == {"success": False}
 
 
