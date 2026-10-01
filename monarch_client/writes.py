@@ -40,8 +40,9 @@ Safety layers, outermost first:
      delete_account) and _verify_merchant_name_exists (rule merchant names).
 
 Verification history: the original write ops were captured from / verified
-against a dedicated, disposable monarch-sandbox account (api-recon site
-`monarch-sandbox`), which has since been DELETED -- the "verified live against
+against a dedicated, disposable monarch-sandbox Monarch account, which has
+since been DELETED (api-recon still registers a `monarch-sandbox` adapter
+site name, with no account behind it) -- the "verified live against
 monarch-sandbox" remarks in docstrings and PROVENANCE notes are dated history,
 not a testing path you can still use. A NEW write op must now be verified some
 other way (see operations/README.md, "Adding a write operation").
