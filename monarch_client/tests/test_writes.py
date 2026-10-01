@@ -277,19 +277,19 @@ async def test_delete_transaction_rule_defaults_missing_deleted_to_false(fake_cl
     assert result == {"deleted_flag": False}
 
 
-def _accounts_page_response(accounts: list[dict]) -> dict:
+def _account_for_edit(**overrides) -> dict:
+    """A manual account as Common_GetAccountForEdit returns it."""
     return {
-        "accountTypeSummaries": [
-            {"type": {"name": "depository"}, "accounts": accounts}
-        ]
+        "account": {
+            "id": "acc1", "displayName": "Manual Cash", "isManual": True,
+            "credential": None, "dataProvider": "", **overrides,
+        }
     }
 
 
 @pytest.mark.asyncio
 async def test_create_transaction_sends_full_input(fake_client):
-    fake_client.responses["Web_GetAccountsPage"] = _accounts_page_response(
-        [{"id": "acc1", "displayName": "Manual Cash", "credential": None}]
-    )
+    fake_client.responses["Common_GetAccountForEdit"] = _account_for_edit()
     fake_client.responses["Common_CreateTransactionMutation"] = {
         "createTransaction": {"transaction": {"id": "t1"}, "errors": None}
     }
@@ -321,9 +321,7 @@ async def test_create_transaction_sends_full_input(fake_client):
 
 @pytest.mark.asyncio
 async def test_create_transaction_surfaces_errors_on_bad_id(fake_client):
-    fake_client.responses["Web_GetAccountsPage"] = _accounts_page_response(
-        [{"id": "bogus", "displayName": "Manual Cash", "credential": None}]
-    )
+    fake_client.responses["Common_GetAccountForEdit"] = _account_for_edit(id="bogus")
     fake_client.responses["Common_CreateTransactionMutation"] = {
         "createTransaction": {
             "transaction": None,
@@ -342,40 +340,56 @@ async def test_create_transaction_surfaces_errors_on_bad_id(fake_client):
 
 @pytest.mark.asyncio
 async def test_create_transaction_rejects_unknown_account_id(fake_client):
-    fake_client.responses["Web_GetAccountsPage"] = _accounts_page_response(
-        [{"id": "acc1", "displayName": "Manual Cash", "credential": None}]
-    )
+    fake_client.responses["Common_GetAccountForEdit"] = {"account": None}
     with pytest.raises(ValueError, match="wasn't found"):
         await writes.create_transaction(
             account_id="does-not-exist", date="2026-09-28", amount=-1,
             merchant_name="x", category_id="cat1",
         )
     # must reject before ever calling the real mutation
-    assert fake_client.calls == [("Web_GetAccountsPage", {"filters": {}})]
+    assert fake_client.calls == [
+        ("Common_GetAccountForEdit", {"id": "does-not-exist"})
+    ]
 
 
 @pytest.mark.asyncio
-async def test_create_transaction_rejects_bank_linked_account(fake_client):
+@pytest.mark.parametrize("overrides", [
+    {"credential": {"id": "cred1", "dataProvider": "plaid"}, "isManual": False,
+     "dataProvider": "plaid"},
+    # M1 regression: a synced account whose credential was detached/nulled
+    # (e.g. a migrated duplicate). The old credential-is-None check let these through.
+    {"credential": None, "isManual": False, "dataProvider": "plaid"},
+    {"credential": None, "isManual": False},
+    {"credential": None, "isManual": None},
+    {"credential": None, "dataProvider": "plaid"},
+])
+async def test_create_transaction_rejects_non_manual_account(fake_client, overrides):
     """Opus review 2026-09-28: Monarch's own mutation only rejects a
-    NONEXISTENT accountId, not a valid-but-linked one -- a linked account's
-    transactions are supposed to come from the bank sync, not manual entry.
-    A manual account's `credential` is null; a linked one has a real
-    credential object."""
-    fake_client.responses["Web_GetAccountsPage"] = _accounts_page_response(
-        [
-            {
-                "id": "linked1",
-                "displayName": "Real Checking",
-                "credential": {"id": "cred1", "dataProvider": "plaid"},
-            }
-        ]
+    NONEXISTENT accountId, not a valid-but-synced one. The gate is the same
+    fail-closed _require_manual that update/delete_account use, so a
+    null-credential synced account is refused too."""
+    fake_client.responses["Common_GetAccountForEdit"] = _account_for_edit(
+        id="linked1", displayName="Real Checking", **overrides
     )
-    with pytest.raises(ValueError, match="bank-linked account"):
+    with pytest.raises(ValueError, match="not positively identified as a manual"):
         await writes.create_transaction(
             account_id="linked1", date="2026-09-28", amount=-1,
             merchant_name="x", category_id="cat1",
         )
-    assert fake_client.calls == [("Web_GetAccountsPage", {"filters": {}})]
+    assert fake_client.calls == [("Common_GetAccountForEdit", {"id": "linked1"})]
+
+
+@pytest.mark.asyncio
+async def test_create_transaction_rejects_account_missing_ismanual_key(fake_client):
+    acct = _account_for_edit()
+    del acct["account"]["isManual"]
+    fake_client.responses["Common_GetAccountForEdit"] = acct
+    with pytest.raises(ValueError, match="manual"):
+        await writes.create_transaction(
+            account_id="acc1", date="2026-09-28", amount=-1,
+            merchant_name="x", category_id="cat1",
+        )
+    assert [c[0] for c in fake_client.calls] == ["Common_GetAccountForEdit"]
 
 
 @pytest.mark.asyncio

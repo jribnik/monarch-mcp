@@ -25,7 +25,7 @@ import math
 import re
 from typing import Any, Optional
 
-from .writes import _call, _require_writes
+from .writes import _call, _get_account_for_edit, _require_manual, _require_writes
 
 TOOLS = [
     "update_account",
@@ -209,30 +209,6 @@ def _check_money(value: Any, label: str) -> None:
     """Finite number (negative allowed, e.g. a debt balance); rejects NaN/inf/bool."""
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         raise ValueError(f"{label}={value!r} must be a finite number.")
-
-
-async def _get_account_for_edit(account_id: str) -> dict[str, Any]:
-    data = await _call("Common_GetAccountForEdit", {"id": account_id})
-    account = data.get("account")
-    if not account:
-        raise ValueError(
-            f"account_id={account_id!r} wasn't found -- double-check the id."
-        )
-    return account
-
-
-def _require_manual(account: dict[str, Any], tool: str) -> None:
-    # Fail closed: refuse unless it is positively identified as manual.
-    if (
-        account.get("isManual") is not True
-        or account.get("credential") is not None
-        or account.get("dataProvider")
-    ):
-        raise ValueError(
-            f"{tool}: account {account.get('id')!r} ({account.get('displayName')!r}) "
-            "is not positively identified as a manual account (bank-linked, or missing/false isManual). Only MANUAL "
-            "accounts can be changed or deleted through this server."
-        )
 
 
 # --- accounts -------------------------------------------------------------

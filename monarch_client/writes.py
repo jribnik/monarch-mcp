@@ -153,39 +153,39 @@ async def _verify_merchant_name_exists(name: str) -> None:
     )
 
 
-async def _verify_account_is_manual(account_id: str) -> None:
-    """Added after Opus review 2026-09-28. create_transaction is meant for
-    manual (non-Plaid) accounts only, but nothing was stopping it being
-    called against a real, bank-linked account -- Monarch's own mutation
-    only rejects a NONEXISTENT accountId (verified live: "Account matching
-    query does not exist."), it doesn't reject a valid-but-linked one. This
-    gate stays even now that delete_transaction exists (below): a manual
-    transaction forced onto a linked account is still a phantom entry that
-    doesn't belong on a real bank feed, whether or not it could later be
-    cleaned up -- a linked account's transactions are supposed to come from
-    the bank sync, not manual entry, and quietly injecting one risks
-    confusing that account's balance/reconciliation regardless. Gate here
-    instead: a manual account's `credential` field is null; a linked one
-    always has a real credential object (dataProvider, institution, etc.)
-    -- see Web_GetAccountsPage.graphql's AccountListItemFields fragment."""
-    accounts = await reads.list_accounts()
-    match = next(
-        (a for a in accounts.get("accounts") or [] if a.get("id") == account_id),
-        None,
-    )
-    if match is None:
+async def _get_account_for_edit(account_id: str) -> dict[str, Any]:
+    """Fresh single-account read (Common_GetAccountForEdit) shared by the
+    manual-account write gates here and in writes_accounts.py."""
+    data = await _call("Common_GetAccountForEdit", {"id": account_id})
+    account = data.get("account")
+    if not account:
         raise ValueError(
-            f"account_id={account_id!r} wasn't found in list_accounts() -- "
-            "double-check the id before retrying."
+            f"account_id={account_id!r} wasn't found -- double-check the id."
         )
-    if match.get("credential") is not None:
+    return account
+
+
+def _require_manual(account: dict[str, Any], tool: str) -> None:
+    """Fail closed: refuse unless the account is POSITIVELY identified as
+    manual (isManual is exactly True, no credential, no dataProvider).
+
+    This replaced create_transaction's earlier _verify_account_is_manual,
+    which only checked `credential is None` and so FAILED OPEN for any
+    bank-synced account whose credential had been detached/nulled (e.g. a
+    migrated duplicate): such an account has isManual false/missing and/or a
+    dataProvider, and now stays refused. Monarch's own mutations only reject
+    a NONEXISTENT accountId, not a valid-but-synced one, and a manual
+    transaction forced onto a bank feed is a phantom entry that confuses the
+    account's balance/reconciliation even if it could later be deleted."""
+    if (
+        account.get("isManual") is not True
+        or account.get("credential") is not None
+        or account.get("dataProvider")
+    ):
         raise ValueError(
-            f"account_id={account_id!r} ({match.get('displayName')!r}) is a "
-            "bank-linked account (it has a credential), not a manual one. "
-            "create_transaction is for MANUAL accounts only -- a linked "
-            "account's transactions are supposed to come from the bank "
-            "sync, not manual entry. Use create_manual_account first if "
-            "you need a new account to record this against."
+            f"{tool}: account {account.get('id')!r} ({account.get('displayName')!r}) "
+            "is not positively identified as a manual account (bank-linked, or missing/false isManual). Only MANUAL "
+            "accounts can be changed or deleted through this server."
         )
 
 
@@ -321,15 +321,16 @@ async def create_transaction(
     server-side for EXISTENCE and returns a real errors.message with
     transaction=null on a nonexistent id, verified live -- see
     Common_CreateTransactionMutation's PROVENANCE note -- but does not
-    reject a valid, bank-linked accountId, so _verify_account_is_manual
-    runs first (see its own docstring for why this gate stays even though
-    delete_transaction below exists). merchant_name itself is NOT
+    reject a valid, bank-linked accountId, so the fail-closed
+    _require_manual gate runs first against a fresh Common_GetAccountForEdit
+    read (see its docstring; this gate stays even though delete_transaction
+    below exists). merchant_name itself is NOT
     validated by either Monarch or this client -- an arbitrary string
     creates a new merchant if it doesn't match an existing one exactly,
     same as the real web app's manual-entry form; that's expected here,
     unlike set_merchant_name on the rule tools."""
     _require_writes("create_transaction")
-    await _verify_account_is_manual(account_id)
+    _require_manual(await _get_account_for_edit(account_id), "create_transaction")
     data = await _call(
         "Common_CreateTransactionMutation",
         {
