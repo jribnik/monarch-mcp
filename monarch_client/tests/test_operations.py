@@ -50,3 +50,29 @@ def test_load_raises_for_unvendored_op():
 
 def test_verify_integrity_is_noop_for_unrecorded_op():
     operations.verify_integrity("Some_Op_Nobody_Vendored_Or_Recorded")
+
+
+def _graphql_files_on_disk() -> set[str]:
+    from pathlib import Path
+
+    return {p.stem for p in Path(operations.__file__).parent.glob("*.graphql")}
+
+
+def test_every_graphql_file_on_disk_has_a_provenance_entry():
+    """Reverse of the hash test above: a .graphql file nobody recorded would
+    otherwise be sent with no integrity check and no drift coverage."""
+    missing = _graphql_files_on_disk() - set(operations.PROVENANCE)
+    assert not missing, f"vendored files with no PROVENANCE entry: {sorted(missing)}"
+
+
+def test_every_provenance_entry_has_a_file_and_a_hash():
+    assert set(operations.PROVENANCE) <= _graphql_files_on_disk()
+    for name, entry in operations.PROVENANCE.items():
+        assert entry.get("vendored_sha256"), f"{name} has no vendored_sha256"
+
+
+def test_verify_integrity_rejects_file_with_no_provenance(monkeypatch):
+    """Simulate a new .graphql dropped in without a PROVENANCE entry."""
+    monkeypatch.setitem(operations._cache, "Brand_New_Op", "query Brand_New_Op { me { id } }\n")
+    with pytest.raises(VendoredOperationError, match="no PROVENANCE entry"):
+        operations.verify_integrity("Brand_New_Op")

@@ -56,14 +56,14 @@ def _prov(sha: str, note: str) -> dict[str, Any]:
     }
 
 
-def _prov_hw(op: str, note: str) -> dict[str, Any]:
-    import hashlib
-
-    from . import operations
-
+def _prov_hw(sha: str, note: str) -> dict[str, Any]:
+    """Provenance for the two HAND-WRITTEN read queries. Their hashes are
+    hardcoded like every other entry: computing them from the file at import
+    time (as an earlier version did) made operations.verify_integrity
+    compare the file with itself, so it could never fail."""
     return {
         "catalog_query_hash": None,
-        "vendored_sha256": hashlib.sha256(operations.load(op).encode()).hexdigest(),
+        "vendored_sha256": sha,
         "exported_at": "2026-09-30T00:00:00+00:00",
         "runs_seen": [],
         "hand_repaired": False,
@@ -111,13 +111,13 @@ PROVENANCE_ENTRIES: dict[str, dict] = {
         "merchant rename, which merges",
     ),
     "Common_GetMerchantForEdit": _prov_hw(
-        "Common_GetMerchantForEdit",
+        "947059a1a5a5c733f8a2f72d1ccaa92f6f72d4e5068737e90b4b4167be1ca4fe",
         "backs update_merchant's read-before-write merge. HAND-WRITTEN read-only "
         "query (field selection copied from the captured Common_UpdateMerchant "
         "response; root field merchant(id: ID!)); verified live on monarch-sandbox",
     ),
     "Common_SearchMerchantsByName": _prov_hw(
-        "Common_SearchMerchantsByName",
+        "c02d37ccd96bb624eef0db5706f2e052e944b5f2b636c261afa4189de0ecea09",
         "backs update_merchant's duplicate-name pre-check. HAND-WRITTEN read-only "
         "query merchants(search, limit, offset); verified live on monarch-sandbox",
     ),

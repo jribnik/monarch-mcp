@@ -509,12 +509,24 @@ def load(op_name: str) -> str:
 def verify_integrity(op_name: str) -> None:
     """Raise VendoredOperationError if the vendored file's text no longer
     matches its recorded vendored_sha256 -- catches a hand-edit that wasn't
-    re-recorded in PROVENANCE. No-op if nothing is recorded for op_name
-    yet."""
+    re-recorded in PROVENANCE -- or if a .graphql file exists for `op_name`
+    with no PROVENANCE entry (or an entry with no hash) at all: such a file
+    would otherwise be sent with no integrity check, and its drift record
+    would be invisible to api-recon. An op with neither a file nor an entry
+    is a no-op here (load() reports that case when the op is actually
+    called)."""
     entry = PROVENANCE.get(op_name)
     expected = entry.get("vendored_sha256") if entry else None
     if not expected:
-        return
+        try:
+            load(op_name)
+        except VendoredOperationError:
+            return
+        raise VendoredOperationError(
+            f"{op_name}.graphql exists but has no PROVENANCE entry with a "
+            "vendored_sha256 -- refusing to send an unverified query. Add the "
+            "entry per the vendoring checklist in operations/README.md"
+        )
 
     text = load(op_name)
     actual = hashlib.sha256(text.encode("utf-8")).hexdigest()
