@@ -62,7 +62,6 @@ that it's actually gone.
 
 from __future__ import annotations
 
-import os
 from typing import Any, Optional
 
 from . import MonarchClient, gate, operations, project
@@ -82,10 +81,6 @@ WRITES_ENV = gate.WRITES_ENV
 def writes_status() -> bool:
     """Public read-only view of the gate (for doctor and diagnostics):
     True iff MONARCH_CLIENT_ENABLE_WRITES=1."""
-    return gate.writes_enabled()
-
-
-def _writes_enabled() -> bool:
     return gate.writes_enabled()
 
 

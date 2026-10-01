@@ -88,20 +88,18 @@ PROVENANCE_ENTRIES: dict[str, dict[str, Any]] = {
 
 
 def split_transaction_result(
-    data: dict[str, Any], *, include_raw: bool = False
+    data: dict[str, Any]
 ) -> dict[str, Any]:
     """Pass-through of `updateTransactionSplit.{errors,transaction}` -- the
     same convention as create_transaction_result: a rejected split comes
     back as a normal `errors.message` with transaction=None (verified live),
     surfaced as-is rather than raised."""
     out: dict[str, Any] = {"updateTransactionSplit": data.get("updateTransactionSplit")}
-    if include_raw:
-        out["_raw"] = data
     return out
 
 
 def update_transaction_rule_result(
-    data: dict[str, Any], *, include_raw: bool = False
+    data: dict[str, Any]
 ) -> dict[str, Any]:
     """Pass-through of `updateTransactionRuleV2.errors`. The app's query
     selects no rule back (same limitation as create), so verify with
@@ -119,8 +117,6 @@ def update_transaction_rule_result(
             "update was REJECTED (nothing changed) -- re-read the rule with "
             "get_transaction_rules and check the arguments"
         )
-    if include_raw:
-        out["_raw"] = data
     return out
 
 
