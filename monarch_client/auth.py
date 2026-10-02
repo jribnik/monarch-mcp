@@ -27,18 +27,24 @@ human-triggered event, not something worth an inline subprocess call on
 monarch_client's hot path.
 
 Which ACCOUNT this reads for is controlled by `MONARCH_CLIENT_SITE`
-(default: "monarch", the real account), not hardcoded -- api-recon also
-registers a "monarch-sandbox" site (see adapters/__init__.py there) backed
-by a dedicated, disposable Monarch account with no real financial data,
-meant for exactly this: verifying a new write operation actually works
-before trusting it against the real one. Each site gets its own cache
-file, so a real-account file and a sandbox file never collide or overwrite
-each other. THIS DISTINCTION MATTERS: an earlier mistake in this project
-ran a live `create_tag` mutation against the real account while intending
-to test against the sandbox, because the code had no sandbox awareness at
-all and silently reused a warm real-account auth cache. `load()` prints
-which site it resolved to (once per process) specifically so that mistake
-is visible before a mutation runs, not after.
+(default: "monarch", the real account), not hardcoded. The mechanism exists
+so a non-real account can be pointed at for testing: api-recon registered a
+"monarch-sandbox" site backed by a dedicated, disposable Monarch account.
+That Monarch ACCOUNT has since been DELETED, but api-recon still registers a
+`monarch-sandbox` adapter site name (src/recon/adapters/__init__.py), so the
+name still resolves there while no live account sits behind it; any other
+site name only works if you have a real session for it in api-recon. Each site gets its own
+cache file, so a real-account file and a test-account file never collide or
+overwrite each other. THIS DISTINCTION MATTERS: an earlier mistake in this
+project ran a live `create_tag` mutation against the real account while
+intending to test against the sandbox, because the code had no site
+awareness at all and silently reused a warm real-account auth cache.
+`load()` prints which site it resolved to (once per process) specifically so
+that mistake is visible before a mutation runs, not after.
+
+The exported file holds cookies plus a few headers (User-Agent, CSRF token) --
+there is no bearer/access token; Monarch's web API authenticates by session
+cookie.
 """
 
 from __future__ import annotations
@@ -79,8 +85,10 @@ class AuthMaterial:
 
 def site() -> str:
     """Which api-recon site this client reads auth material for. Override
-    with MONARCH_CLIENT_SITE -- e.g. "monarch-sandbox" while verifying a
-    write operation. Defaults to "monarch", the real account."""
+    with MONARCH_CLIENT_SITE (any site api-recon has a session for; the old
+    "monarch-sandbox" Monarch account no longer exists, though api-recon still
+    registers that site name). Defaults to "monarch", the
+    real account."""
     return os.environ.get("MONARCH_CLIENT_SITE", DEFAULT_SITE)
 
 
@@ -88,7 +96,7 @@ def cache_path() -> Path:
     """Auth file for the CURRENT site (see site()) -- the exact path
     `recon export-session <site> --api-host api.monarch.com --out <this
     path>` should be pointed at. Distinct per site so a real-account file
-    and a sandbox file never collide."""
+    and a test-account file never collide."""
     return STATE_DIR / f"api-auth.{site()}.json"
 
 
@@ -102,7 +110,10 @@ def _export_command(current_site: str) -> str:
 def _parse_dt(value: Optional[str]) -> Optional[datetime]:
     if not value:
         return None
-    dt = datetime.fromisoformat(value)
+    try:
+        dt = datetime.fromisoformat(value)
+    except (ValueError, TypeError) as e:
+        raise MonarchAuthError(f"unparseable timestamp {value!r}") from e
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
@@ -131,9 +142,13 @@ def _read_cache() -> AuthMaterial:
             expires_at=_parse_dt(payload.get("expires_at")),
             exported_at=_parse_dt(payload.get("exported_at")),
         )
-    except KeyError as e:
+    except (KeyError, TypeError, ValueError, MonarchAuthError) as e:
+        # KeyError: a required field is missing; TypeError/ValueError: the
+        # JSON has the wrong shape (e.g. cookies is a list); MonarchAuthError:
+        # _parse_dt rejected a timestamp. All mean "re-export the file".
+        what = f"missing {e}" if isinstance(e, KeyError) else str(e)
         raise MonarchAuthError(
-            f"auth file at {path} is malformed (missing {e}) -- delete it "
+            f"auth file at {path} is malformed ({what}) -- delete it "
             f"and re-run\nrun: {export_cmd}"
         ) from e
 
@@ -142,14 +157,14 @@ def _announce_site() -> None:
     """Print which site this process is about to authenticate against,
     once per site per process -- see module docstring for why this exists
     (a prior mistake ran a live mutation against the real account while a
-    test script intended to hit the sandbox, with nothing making that
+    test script intended to hit a test account, with nothing making that
     visible beforehand)."""
     global _announced_site
     current_site = site()
     if _announced_site == current_site:
         return
     _announced_site = current_site
-    label = "REAL account" if current_site == DEFAULT_SITE else "sandbox/test account"
+    label = "REAL account" if current_site == DEFAULT_SITE else "NON-DEFAULT site (test account)"
     print(f"monarch_client: authenticating against site {current_site!r} ({label})", file=sys.stderr)
 
 

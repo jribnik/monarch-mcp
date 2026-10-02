@@ -18,7 +18,7 @@ ACCOUNT = {
     "interestRateType": None, "minimumPayment": None, "plannedPayment": None,
     "excludeFromDebtPaydown": False, "type": {"name": "depository"},
     "subtype": {"name": "checking"}, "credential": None, "ownedByUser": None,
-    "businessEntity": None,
+    "businessEntity": None, "isAsset": True,
 }
 
 
@@ -41,8 +41,16 @@ def fake(monkeypatch):
     return c
 
 
+_BUDGETS = {
+    "savingsGoalMonthlyBudgetAmounts": [
+        {"id": "x", "savingsGoal": {"id": "g1", "name": "Trip"}, "monthlyAmounts": []}
+    ],
+    "budgetData": {}, "categoryGroups": [],
+}
+
+
 def _mutations(c):
-    return [x for x in c.calls if x[0] != "Common_GetAccountForEdit"]
+    return [x for x in c.calls if operations.is_mutation(x[0])]
 
 
 CALLS = {
@@ -53,7 +61,7 @@ CALLS = {
     "create_savings_goal": lambda: wa.create_savings_goal("g"),
     "update_savings_goal": lambda: wa.update_savings_goal("g1", name="x"),
     "set_savings_goal_budget_amount": lambda: wa.set_savings_goal_budget_amount("g1", 5, "2026-10-01"),
-    "delete_savings_goal": lambda: wa.delete_savings_goal("g1"),
+    "delete_savings_goal": lambda: wa.delete_savings_goal("g1", "Trip"),
 }
 
 
@@ -114,6 +122,27 @@ async def test_update_account_refuses_linked_and_missing(fake):
     with pytest.raises(ValueError, match="wasn't found"):
         await wa.update_account("a1", name="x")
     assert _mutations(fake) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("patch", [{"isAsset": False}, {"isAsset": None}, {"isAsset": "true"}])
+async def test_update_account_refuses_non_asset_accounts(fake, patch):
+    fake.responses["Common_GetAccountForEdit"] = {"account": {**ACCOUNT, **patch}}
+    with pytest.raises(ValueError, match="not an asset"):
+        await wa.update_account("a1", name="x")
+    acct = {k: v for k, v in ACCOUNT.items() if k != "isAsset"}
+    fake.responses["Common_GetAccountForEdit"] = {"account": acct}
+    with pytest.raises(ValueError, match="recurrence"):
+        await wa.update_account("a1", name="x")
+    assert _mutations(fake) == []
+
+
+@pytest.mark.asyncio
+async def test_delete_account_still_allowed_for_liability(fake):
+    fake.responses["Common_GetAccountForEdit"] = {"account": {**ACCOUNT, "isAsset": False}}
+    fake.responses["Common_DeleteAccount"] = {"deleteAccount": {"deleted": True, "errors": None}}
+    await wa.delete_account("a1", "zz-acct")
+    assert len(_mutations(fake)) == 1
 
 
 @pytest.mark.asyncio
@@ -178,8 +207,13 @@ async def test_negative_amount_rejected(fake):
 @pytest.mark.asyncio
 async def test_set_flex_budget_amount(fake):
     fake.responses["Common_UpdateFlexBudgetMutation"] = {"updateOrCreateFlexBudgetItem": {"budgetItem": {"budgetAmount": 9}}}
-    r = await wa.set_flex_budget_amount(9, "2026-10-01", apply_to_future=True)
-    assert fake.calls == [("Common_UpdateFlexBudgetMutation", {"input": {
+    fake.responses["Common_GetJointPlanningData"] = {"budgetData": {
+        "monthlyAmountsForFlexExpense": {"monthlyAmounts": [
+            {"month": "2026-10-01", "plannedCashFlowAmount": 4.5}]}}}
+    r = await wa.set_flex_budget_amount(9, "2026-10-01", apply_to_future=True, confirm="4.50")
+    assert fake.calls[0] == ("Common_GetJointPlanningData",
+                             {"startDate": "2026-10-01", "endDate": "2026-10-01"})
+    assert fake.calls[1:] == [("Common_UpdateFlexBudgetMutation", {"input": {
         "startDate": "2026-10-01", "amount": 9, "applyToFuture": True}})]
     assert r["updateOrCreateFlexBudgetItem"]["budgetItem"]["budgetAmount"] == 9
 
@@ -228,10 +262,12 @@ async def test_set_savings_goal_budget_amount(fake):
 @pytest.mark.asyncio
 async def test_delete_savings_goal(fake):
     fake.responses["Common_DeleteSavingsGoal"] = {"deleteSavingsGoal": {"success": True, "errors": None}}
-    assert await wa.delete_savings_goal("g1") == {"deleted_flag": True, "errors": None}
-    assert fake.calls == [("Common_DeleteSavingsGoal", {"input": {"id": "g1"}})]
+    fake.responses["Common_GetJointPlanningData"] = _BUDGETS
+    assert await wa.delete_savings_goal("g1", "Trip") == {"deleted_flag": True, "errors": None}
+    assert fake.calls[-1] == ("Common_DeleteSavingsGoal", {"input": {"id": "g1"}})
+    assert _mutations(fake) == [("Common_DeleteSavingsGoal", {"input": {"id": "g1"}})]
     fake.responses["Common_DeleteSavingsGoal"] = {"deleteSavingsGoal": {"success": False, "errors": {"message": "m"}}}
-    assert (await wa.delete_savings_goal("g1"))["deleted_flag"] is False
+    assert (await wa.delete_savings_goal("g1", "Trip"))["deleted_flag"] is False
 
 
 def test_provenance_shape_and_sha():
@@ -337,3 +373,42 @@ async def test_display_balance_only_on_manual(fake):
     with pytest.raises(ValueError, match="bank-linked|manual"):
         await wa.update_account("a1", display_balance=1)
     assert _mutations(fake) == []
+
+
+@pytest.mark.asyncio
+async def test_create_savings_goal_followup_failure_keeps_created_goal(fake, monkeypatch):
+    """M14: the goal exists once the create call returns. If the follow-up
+    update raises, the caller must still get the new goal's id back."""
+    fake.responses["Common_CreateSavingsGoals"] = {
+        "createSavingsGoals": {"savingsGoals": [{"id": "g1", "type": "savings"}], "errors": None}
+    }
+
+    real_call = fake.call
+
+    async def flaky(op_name, variables):
+        if op_name == "Common_UpdateSavingsGoal":
+            raise errors.MonarchTransportError("Common_UpdateSavingsGoal: request failed (boom)")
+        return await real_call(op_name, variables)
+
+    monkeypatch.setattr(fake, "call", flaky)
+    r = await wa.create_savings_goal("Trip", target_amount=100)
+    assert r["createSavingsGoals"]["savingsGoals"][0]["id"] == "g1"
+    assert "followUpUpdate" not in r
+    assert "g1" in r["followUpError"] and "boom" in r["followUpError"]
+    assert "update_savings_goal" in r["followUpError"]
+
+
+@pytest.mark.asyncio
+async def test_create_savings_goal_followup_wanted_but_no_goal_returned(fake):
+    fake.responses["Common_CreateSavingsGoals"] = {"createSavingsGoals": {"savingsGoals": [], "errors": None}}
+    r = await wa.create_savings_goal("Trip", target_amount=100)
+    assert "NOT applied" in r["followUpError"]
+    assert [c[0] for c in fake.calls] == ["Common_CreateSavingsGoals"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["", "   "])
+async def test_update_savings_goal_rejects_empty_name(fake, name):
+    with pytest.raises(ValueError, match="name must not be empty"):
+        await wa.update_savings_goal("g1", name=name)
+    assert fake.calls == []

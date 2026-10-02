@@ -51,7 +51,8 @@ in automatically.
    pattern). Comment lines are stripped before the query is sent -- they're
    for the next human, not for Monarch's API.
 
-5. **Update the `PROVENANCE` entry** in `__init__.py`:
+5. **Update the `PROVENANCE` entry** in `__init__.py` (or in the owning
+   `writes_*.py` module's `PROVENANCE_ENTRIES`, see "Mutations" below):
    - `catalog_query_hash` -- copy from the newly-exported file's `# query_hash:`
      header line (this is a hash of the catalog's, possibly-redacted, text).
    - `vendored_sha256` -- sha256 of the file's query text *with the header
@@ -96,76 +97,76 @@ multi-kilobyte query changes by one field.
 
 ## Mutations
 
-All 12 writes.py functions are vendored (full coverage; 11 write tools at the
-tool level, since preview_transaction_rule is counted as a read): 10 real mutations
-(`Common_CreateTransactionTag`, `Common_DeleteHouseholdTransactionTag`,
-`Common_CreateTransactionRuleMutationV2`, `Common_DeleteTransactionRule`,
-`Web_TransactionDrawerUpdateTransaction` (backs 2 tools),
-`Web_SetTransactionTags`, `Common_MarkAsNotRecurring`,
-`Common_CreateTransactionMutation`, `Common_DeleteTransactionMutation`,
-`Web_CreateManualAccount`), plus `Common_PreviewTransactionRule` -- a
-QUERY, not a mutation, grouped here because its whole purpose is
-dry-running one (see its own PROVENANCE note).
-Every mutation was captured and/or verified against `monarch-sandbox` -- a
-dedicated, disposable Monarch
-account registered in api-recon's adapter registry
-(`~/src/api-recon/src/recon/adapters/__init__.py`), never the real
-`monarch` site -- so mutations could be exercised freely without touching
-real financial data. `recon login monarch-sandbox` once (a real, headful
-browser login on that throwaway account), then normal
-`recon walk`/`recon catalog`/`recon export-ops` commands work against it
-exactly like the real site, just pointed at `monarch-sandbox` instead of
-`monarch`.
+43 operations are vendored: 28 mutations (backing the 30 write tools --
+`Web_TransactionDrawerUpdateTransaction` backs both `recategorize_transaction`
+and `update_transaction`, `Common_SplitTransactionMutation` backs both
+`split_transaction` and `unsplit_transaction`) and 15 queries (the read tools'
+queries, `Common_PreviewTransactionRule` -- a QUERY grouped with the writes
+only because its purpose is dry-running a rule -- and the write tools' fresh
+pre-reads `Common_GetAccountForEdit`, `Common_GetMerchantForEdit`,
+`Common_SearchMerchantsByName`). Where each op's `PROVENANCE` entry lives:
 
-**As of 2026-09-28, this account is planned for deletion around 2026-10-01**
-(it costs money to keep; every write op's coverage gap was closed first,
-specifically to get full use out of it before that). If it's gone by the
-time you read this and a NEW write op needs vendoring, you'll need to
-re-register and re-login a fresh disposable account in api-recon's adapter
-registry first -- the workflow below is unaffected, just needs a live
-account to point at.
+- `operations/__init__.py`: the 09-24..09-28 ops (reads, tags, rules,
+  transactions, manual accounts).
+- `writes_categories.py`, `writes_accounts.py`, `writes_splits_rules.py`
+  (`PROVENANCE_ENTRIES`): the 21 ops added by the 2026-09-30 UI sweep -- 18
+  mutations backing 19 tools (category/group/tag/merchant updates, account
+  update/delete, budgets, savings goals, split, rule update) plus 3
+  hand-written reads (`Common_GetAccountForEdit`, `Common_GetMerchantForEdit`,
+  `Common_SearchMerchantsByName`). `monarch_client/__init__.py` merges them into
+  `PROVENANCE` at import (they can't be imported from here -- circular).
+  Their `catalog_query_hash` is `None` and `walk_reachable` is `False`: they
+  were captured as raw request bodies by an api-recon UI script, never
+  catalog-exported, so api-recon's drift-watch skips them.
 
-This sidesteps the drift-watch merge-window hazard entirely: since nothing
-runs a scheduled `recon catalog monarch-sandbox` diff, there's no
-`OPERATION_REMOVED`/`not_in_latest_run` false-positive risk from merging a
-mutation-only run into that site's `current.json` the way there would be
-for the real `monarch` site's nightly drift-watch. `recon catalog
-monarch-sandbox --all-runs --merge-runs 0` was used freely to keep its
-catalog cumulative.
+Every `.graphql` file must have a `PROVENANCE` entry with a `vendored_sha256`:
+`tests/test_operations.py` asserts it, and `verify_integrity` refuses to send
+a file with no entry or a mismatched hash. Hashes are hardcoded in the entries
+(never computed from the file at import time, which would make the integrity
+check compare a file with itself).
 
-Three ops (`Common_DeleteTransactionRule`, `Common_MarkAsNotRecurring`,
-`Common_DeleteTransactionMutation`) are each an explicit, documented
-exception to normal export: never driven through api-recon's UI
-automation at all -- the first two because their UI flows proved too
-fragile/slow to drive reliably via Playwright (a nested
-delete-confirmation dialog; Monarch's recurring detection being an async
-backend batch job rather than something a fresh transaction triggers
-immediately), the third (added 2026-09-28) simply because it was recovered
-directly from the old abandoned monarchmoney-enhanced library rather than
-captured fresh. Each was instead verified by a direct, functional live
-call against monarch-sandbox with the library's own hand-authored query
-text -- confirmed to succeed and confirmed to actually change server state
-via a follow-up read. See each op's own `.graphql` file header for the
-full rationale.
+Three mutations are explicit exceptions to normal export, each documented in
+its own `.graphql` header: `Common_DeleteTransactionRule`,
+`Common_MarkAsNotRecurring` and `Common_DeleteTransactionMutation` (never
+driven through api-recon's UI automation -- nested-dialog / async-backend
+flows that proved too fragile, or recovered from the legacy
+monarchmoney-enhanced library -- and verified by a direct functional call plus
+a follow-up read). The three hand-written reads above are likewise not
+catalog-exported.
 
-For a NEW write operation (or to re-verify an existing one):
+### The monarch-sandbox Monarch account no longer exists
 
-1. Ensure `monarch-sandbox` has whatever test data the op needs (a manual
-   account, a manual transaction, a manually-forced recurring stream via
-   the Recurring page's "mark this merchant as recurring" override, etc.)
-   -- see `writes.py`'s module docstring and each PROVENANCE note for what
-   already exists there.
-2. Drive the mutation via a real Playwright script against
-   `session.load("monarch-sandbox")` (see api-recon's `capture_context`),
-   capturing a HAR the same way `recon walk` does.
-3. `recon catalog monarch-sandbox --all-runs --merge-runs 0`, then
-   `recon export-ops monarch-sandbox --op <Name> --out
-   monarch_client/operations/`.
-4. Follow the same redaction check and PROVENANCE steps as any other
-   vendored op (see above).
-5. Verify live: call the new op directly, confirm no errors, confirm the
-   expected state change via a follow-up read -- then verify again through
-   the actual `server.py` tool function with `MONARCH_CLIENT_SITE=monarch-sandbox`
-   explicitly asserted in the script before anything mutates (server.py has
-   called `monarch_client` directly, with no backend-selection layer, since
-   the 2026-09-28 flip -- see server.py's own module docstring).
+Everything above was captured and verified live against `monarch-sandbox`, a
+dedicated disposable Monarch account. That Monarch **account** has been
+**deleted** (it cost money to keep), so "verified live against monarch-sandbox"
+in `.graphql` headers, PROVENANCE notes and docstrings is dated history.
+api-recon still registers a `monarch-sandbox` adapter site *name*
+(`src/recon/adapters/__init__.py`), so the name resolves there, but no account
+sits behind it: its `recon login` and `MONARCH_CLIENT_SITE=monarch-sandbox`
+cannot work. (A leftover `~/.monarch-mcp/api-auth.monarch-sandbox.json` is dead
+local state.)
+Vendoring and re-vendoring READ operations is unaffected: it needs only the
+real `monarch` site, via the checklist at the top of this file.
+
+### Adding a write operation (no sandbox)
+
+A new mutation can no longer be driven freely against a throwaway account, so
+there is no cheap way to verify it. Options, safest first:
+
+1. Re-register and `recon login` a fresh disposable Monarch account in
+   api-recon's adapter registry (`~/src/api-recon/src/recon/adapters/__init__.py`)
+   and follow the old workflow: drive the mutation with a Playwright script,
+   `recon catalog <site> --all-runs --merge-runs 0`, `recon export-ops <site>
+   --op <Name> --out monarch_client/operations/`, then verify through the real
+   `server.py` tool with `MONARCH_CLIENT_SITE=<site>` asserted before anything
+   mutates.
+2. Against the real account, only with the owner's explicit go-ahead, on a
+   throwaway object the test itself creates and then removes (a tag, a manual
+   account/transaction, a rule with a criterion nothing matches), reading the
+   state back before and after. Never test on pre-existing data.
+
+Either way: vendor the file, add its `PROVENANCE` entry with the hash, give
+the tool its fresh-read confirm gate if it is destructive
+(`writes._require_confirm`), add the wrapper to `server.py` (keyword
+arguments) and the tool to `tests/test_server_tools.py`'s expected sets, and
+update the README tool table and counts.

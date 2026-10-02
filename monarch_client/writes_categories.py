@@ -5,12 +5,17 @@ Split out of writes.py (2026-09-30) so it can be developed independently;
 follows writes.py conventions exactly: every function calls
 _require_writes(<tool>) FIRST, then _call(...). The shared helpers are
 imported from .writes (not re-implemented) so monkeypatching
-`writes._client` in tests covers this module too.
+`writes._client` (and `reads._client`, for the fresh reads behind the confirm
+gates) in tests covers this module too.
 
 All eight operations were captured from the live web app against the
 disposable monarch-sandbox account on 2026-09-30 (api-recon UI capture,
 not catalog-exported; see PROVENANCE_ENTRIES below and operations/README.md)
-and verified live against that sandbox. No merchant DELETE is built
+and verified live against that sandbox (since deleted; dated history).
+delete_category_group and delete_category each require a `confirm` equal to
+the group's / category's current name (fresh get_categories read,
+writes._require_confirm); delete_category additionally needs its explicit
+move/uncategorize choice. No merchant DELETE is built
 (deliberately: Common_DeleteMerchant is destructive and out of scope).
 
 Error convention: like the other write results (project.delete_tag_result
@@ -25,7 +30,8 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Optional
 
-from .writes import _call, _require_writes
+from . import reads
+from .writes import _call, _require_confirm, _require_writes
 
 TOOLS = [
     "create_category_group",
@@ -56,14 +62,14 @@ def _prov(sha: str, note: str) -> dict[str, Any]:
     }
 
 
-def _prov_hw(op: str, note: str) -> dict[str, Any]:
-    import hashlib
-
-    from . import operations
-
+def _prov_hw(sha: str, note: str) -> dict[str, Any]:
+    """Provenance for the two HAND-WRITTEN read queries. Their hashes are
+    hardcoded like every other entry: computing them from the file at import
+    time (as an earlier version did) made operations.verify_integrity
+    compare the file with itself, so it could never fail."""
     return {
         "catalog_query_hash": None,
-        "vendored_sha256": hashlib.sha256(operations.load(op).encode()).hexdigest(),
+        "vendored_sha256": sha,
         "exported_at": "2026-09-30T00:00:00+00:00",
         "runs_seen": [],
         "hand_repaired": False,
@@ -111,13 +117,13 @@ PROVENANCE_ENTRIES: dict[str, dict] = {
         "merchant rename, which merges",
     ),
     "Common_GetMerchantForEdit": _prov_hw(
-        "Common_GetMerchantForEdit",
+        "947059a1a5a5c733f8a2f72d1ccaa92f6f72d4e5068737e90b4b4167be1ca4fe",
         "backs update_merchant's read-before-write merge. HAND-WRITTEN read-only "
         "query (field selection copied from the captured Common_UpdateMerchant "
         "response; root field merchant(id: ID!)); verified live on monarch-sandbox",
     ),
     "Common_SearchMerchantsByName": _prov_hw(
-        "Common_SearchMerchantsByName",
+        "c02d37ccd96bb624eef0db5706f2e052e944b5f2b636c261afa4189de0ecea09",
         "backs update_merchant's duplicate-name pre-check. HAND-WRITTEN read-only "
         "query merchants(search, limit, offset); verified live on monarch-sandbox",
     ),
@@ -255,12 +261,24 @@ async def update_category_group(
 
 
 async def delete_category_group(
-    group_id: str, move_to_group_id: Optional[str] = None
+    group_id: str, confirm: str, move_to_group_id: Optional[str] = None
 ) -> dict[str, Any]:
     """Delete a category group. If it still contains categories, pass
     move_to_group_id to re-home them; otherwise the server refuses a
-    non-empty group ("Category group is not empty"). Verified live against monarch-sandbox."""
+    non-empty group ("Category group is not empty"). `confirm` must exactly
+    equal the group's current name (fresh get_categories read; unknown ids
+    are refused)."""
     _require_writes("delete_category_group")
+    groups = (await reads.get_categories()).get("categoryGroups") or []
+    group = next((g for g in groups if g.get("id") == group_id), None)
+    if group is None:
+        raise ValueError(
+            f"delete_category_group: group_id={group_id!r} wasn't found in get_categories."
+        )
+    _require_confirm(
+        "delete_category_group", confirm, [group.get("name")],
+        f"the group's name {group.get('name')!r}",
+    )
     variables: dict[str, Any] = {"id": group_id}
     if move_to_group_id is not None:
         variables["moveToGroupId"] = move_to_group_id
@@ -349,15 +367,29 @@ async def update_category(
 
 async def delete_category(
     category_id: str,
+    confirm: str,
     move_to_category_id: Optional[str] = None,
     uncategorize_transactions: bool = False,
 ) -> dict[str, Any]:
-    """Delete a category. Transactions in it are reassigned to
-    move_to_category_id. Deleting WITHOUT a move target un-categorizes every
-    transaction in the category, so that must be requested explicitly with
-    uncategorize_transactions=True -- with neither argument a ValueError is
-    raised before anything is sent. Verified live against monarch-sandbox."""
+    """IRREVERSIBLE. Delete a category. `confirm` must exactly equal the
+    category's current name (case-sensitive), from a fresh get_categories
+    read made inside the tool; an unknown id is refused. Transactions in it
+    are reassigned to move_to_category_id. Deleting WITHOUT a move target
+    un-categorizes every transaction in the category, so that must be
+    requested explicitly with uncategorize_transactions=True -- with neither
+    argument a ValueError is raised before anything is sent. Verified live
+    against monarch-sandbox."""
     _require_writes("delete_category")
+    cats = (await reads.get_categories()).get("categories") or []
+    cat = next((c for c in cats if c.get("id") == category_id), None)
+    if cat is None:
+        raise ValueError(
+            f"delete_category: category_id={category_id!r} wasn't found in get_categories."
+        )
+    _require_confirm(
+        "delete_category", confirm, [cat.get("name")],
+        f"the category's name {cat.get('name')!r}",
+    )
     if move_to_category_id is None and not uncategorize_transactions:
         raise ValueError(
             "delete_category: pass move_to_category_id to reassign this "
@@ -397,6 +429,10 @@ async def update_tag(
 
 
 _MERCHANT_SEARCH_LIMIT = 100
+
+# The only defaultCategoryApplicationMode value with capture evidence
+# (api-recon captured-mutations-2026-09-30.json); see update_merchant.
+_KNOWN_APPLICATION_MODE = "new_and_edits"
 
 
 async def _get_merchant(merchant_id: str) -> dict[str, Any]:
@@ -473,7 +509,17 @@ async def update_merchant(
     Monarch rejects it (verified live), and this refuses up front with a
     clear message when the name clash is visible. Merging merchants is done
     by renaming the transactions instead (update_transaction). Empty/blank
-    names are refused."""
+    names are refused.
+
+    default_category_application_mode is validated: the only value with
+    capture evidence (api-recon's 2026-09-30 sandbox UI capture) is
+    "new_and_edits" (apply to new transactions and edits); the other mode
+    names, and in particular whichever one retroactively re-categorizes every
+    EXISTING transaction of the merchant, were never captured and are
+    unknown. So only "new_and_edits" or the merchant's own current mode
+    (from the fresh read) is accepted; any other string is refused rather
+    than sent unverified. To apply a default category retroactively, do it
+    in the Monarch web app, or recategorize_transaction each one."""
     _require_writes("update_merchant")
     if name is not None and not name.strip():
         raise ValueError("update_merchant: name must not be empty")
@@ -483,6 +529,19 @@ async def update_merchant(
             "clear_default_category=True, not both"
         )
     cur = await _get_merchant(merchant_id)
+    if default_category_application_mode is not None:
+        allowed = {_KNOWN_APPLICATION_MODE}
+        if cur.get("defaultCategoryApplicationMode"):
+            allowed.add(cur["defaultCategoryApplicationMode"])
+        if default_category_application_mode not in allowed:
+            raise ValueError(
+                f"update_merchant: default_category_application_mode="
+                f"{default_category_application_mode!r} is not a verified value "
+                f"(accepted: {sorted(allowed)}). Only 'new_and_edits' was ever "
+                "captured; other modes are unknown and one of them may "
+                "retroactively re-categorize ALL of the merchant's existing "
+                "transactions. NOT sending. Use the Monarch web app for that."
+            )
     if name is not None:
         # Monarch stores names verbatim (verified live 2026-09-30: a padded
         # '  X  ' became its own merchant next to 'X'), so strip here -- a
@@ -533,7 +592,7 @@ async def update_merchant(
         }
     mode = default_category_application_mode or cur.get(
         "defaultCategoryApplicationMode"
-    ) or "new_and_edits"
+    ) or _KNOWN_APPLICATION_MODE
     data = await _call(
         "Common_UpdateMerchant",
         {

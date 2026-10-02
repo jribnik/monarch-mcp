@@ -129,4 +129,22 @@ class TestSiteIsolation:
 
         err = capsys.readouterr().err
         assert err.count("authenticating against site") == 2
-        assert "sandbox/test account" in err
+        assert "NON-DEFAULT site" in err
+
+
+class TestMalformedTimestamps:
+    @pytest.mark.parametrize("field", ["expires_at", "exported_at"])
+    def test_bad_timestamp_raises_auth_error_not_value_error(self, isolated_cache, field):
+        _write_cache(isolated_cache, **{field: "not-a-date"})
+        with pytest.raises(MonarchAuthError, match="malformed.*recon export-session|malformed"):
+            auth.load()
+
+    def test_non_string_timestamp_raises_auth_error(self, isolated_cache):
+        _write_cache(isolated_cache, expires_at=12345)
+        with pytest.raises(MonarchAuthError, match="recon export-session"):
+            auth.load()
+
+    def test_wrong_shape_cookies_raises_auth_error(self, isolated_cache):
+        isolated_cache.write_text(json.dumps({"cookies": [1, 2], "headers": {}}))
+        with pytest.raises(MonarchAuthError, match="recon export-session"):
+            auth.load()

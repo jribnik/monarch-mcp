@@ -60,8 +60,9 @@ async def test_delete_tag_sends_bare_tag_id(fake_client):
     fake_client.responses["Common_DeleteHouseholdTransactionTag"] = {
         "deleteTransactionTag": {"errors": None}
     }
-    result = await writes.delete_tag("t1")
-    assert fake_client.calls == [
+    _seed_reads(fake_client)
+    result = await writes.delete_tag("t1", "Vacation")
+    assert _mutation_calls(fake_client) == [
         ("Common_DeleteHouseholdTransactionTag", {"tagId": "t1"})
     ]
     assert result == {"deleteTransactionTag": {"errors": None}}
@@ -72,7 +73,11 @@ async def test_delete_tag_surfaces_errors(fake_client):
     fake_client.responses["Common_DeleteHouseholdTransactionTag"] = {
         "deleteTransactionTag": {"errors": [{"message": "Tag not found"}]}
     }
-    result = await writes.delete_tag("bogus")
+    _seed_reads(fake_client)
+    fake_client.responses["Common_GetHouseholdTransactionTags"] = {
+        "householdTransactionTags": [{"id": "bogus", "name": "Bogus"}]
+    }
+    result = await writes.delete_tag("bogus", "Bogus")
     assert result["deleteTransactionTag"]["errors"] == [{"message": "Tag not found"}]
 
 
@@ -216,12 +221,16 @@ async def test_create_transaction_rule_passes_apply_to_existing(fake_client):
     fake_client.responses["Common_CreateTransactionRuleMutationV2"] = {
         "createTransactionRuleV2": {"errors": None}
     }
+    fake_client.responses["Common_PreviewTransactionRule"] = {
+        "transactionRulePreview": {"totalCount": 42, "results": []}
+    }
     await writes.create_transaction_rule(
         original_statement_criteria=[{"operator": "contains", "value": "AMZN"}],
         set_category_action="cat2",
         apply_to_existing_transactions=True,
+        confirm="42",
     )
-    op_name, variables = fake_client.calls[0]
+    op_name, variables = fake_client.calls[-1]
     assert op_name == "Common_CreateTransactionRuleMutationV2"
     assert variables["input"]["applyToExistingTransactions"] is True
     assert variables["input"]["originalStatementCriteria"] == [
@@ -261,8 +270,9 @@ async def test_delete_transaction_rule_sends_bare_id(fake_client):
     fake_client.responses["Common_DeleteTransactionRule"] = {
         "deleteTransactionRule": {"deleted": False, "errors": None}
     }
-    result = await writes.delete_transaction_rule("rule123")
-    assert fake_client.calls == [("Common_DeleteTransactionRule", {"id": "rule123"})]
+    _seed_reads(fake_client)
+    result = await writes.delete_transaction_rule("rule123", "acme")
+    assert _mutation_calls(fake_client) == [("Common_DeleteTransactionRule", {"id": "rule123"})]
     # `deleted: False` even on success is a known API quirk -- must be
     # passed through as-is, not "corrected" to True.
     assert result == {"deleted_flag": False}
@@ -273,23 +283,57 @@ async def test_delete_transaction_rule_defaults_missing_deleted_to_false(fake_cl
     fake_client.responses["Common_DeleteTransactionRule"] = {
         "deleteTransactionRule": {"errors": None}
     }
-    result = await writes.delete_transaction_rule("rule123")
+    _seed_reads(fake_client)
+    result = await writes.delete_transaction_rule("rule123", "acme")
     assert result == {"deleted_flag": False}
 
 
-def _accounts_page_response(accounts: list[dict]) -> dict:
+def _seed_reads(fake_client):
+    """Fresh-read responses the confirm gates consult (t1 / rule123 /
+    stream123 / tag t1 exist; names are what `confirm` must echo)."""
+    r = fake_client.responses
+    r["Common_GetHouseholdTransactionTags"] = {
+        "householdTransactionTags": [{"id": "t1", "name": "Vacation"}]
+    }
+    r["Web_GetTransactionRules"] = {"transactionRules": [{
+        "id": "rule123",
+        "merchantNameCriteria": [{"operator": "contains", "value": "acme"}]}]}
+    r["Web_GetTransactionDrawer"] = {
+        "getTransaction": {
+            "id": "t1", "amount": -5.0, "date": "2026-09-01",
+            "merchant": {"id": "m1", "name": "Coffee Shop"},
+        },
+        "myHousehold": None,
+    }
+    r["Common_GetAggregatedRecurringItems"] = {
+        "aggregatedRecurringItems": {
+            "groups": [{"results": [{"stream": {
+                "id": "stream123", "name": "Netflix Sub",
+                "merchant": {"id": "m9", "name": "Netflix"},
+            }}]}],
+            "aggregatedSummary": None,
+        }
+    }
+
+
+def _mutation_calls(fake_client):
+    from monarch_client import operations
+    return [c for c in fake_client.calls if operations.is_mutation(c[0])]
+
+
+def _account_for_edit(**overrides) -> dict:
+    """A manual account as Common_GetAccountForEdit returns it."""
     return {
-        "accountTypeSummaries": [
-            {"type": {"name": "depository"}, "accounts": accounts}
-        ]
+        "account": {
+            "id": "acc1", "displayName": "Manual Cash", "isManual": True,
+            "credential": None, "dataProvider": "", **overrides,
+        }
     }
 
 
 @pytest.mark.asyncio
 async def test_create_transaction_sends_full_input(fake_client):
-    fake_client.responses["Web_GetAccountsPage"] = _accounts_page_response(
-        [{"id": "acc1", "displayName": "Manual Cash", "credential": None}]
-    )
+    fake_client.responses["Common_GetAccountForEdit"] = _account_for_edit()
     fake_client.responses["Common_CreateTransactionMutation"] = {
         "createTransaction": {"transaction": {"id": "t1"}, "errors": None}
     }
@@ -321,9 +365,7 @@ async def test_create_transaction_sends_full_input(fake_client):
 
 @pytest.mark.asyncio
 async def test_create_transaction_surfaces_errors_on_bad_id(fake_client):
-    fake_client.responses["Web_GetAccountsPage"] = _accounts_page_response(
-        [{"id": "bogus", "displayName": "Manual Cash", "credential": None}]
-    )
+    fake_client.responses["Common_GetAccountForEdit"] = _account_for_edit(id="bogus")
     fake_client.responses["Common_CreateTransactionMutation"] = {
         "createTransaction": {
             "transaction": None,
@@ -342,40 +384,56 @@ async def test_create_transaction_surfaces_errors_on_bad_id(fake_client):
 
 @pytest.mark.asyncio
 async def test_create_transaction_rejects_unknown_account_id(fake_client):
-    fake_client.responses["Web_GetAccountsPage"] = _accounts_page_response(
-        [{"id": "acc1", "displayName": "Manual Cash", "credential": None}]
-    )
+    fake_client.responses["Common_GetAccountForEdit"] = {"account": None}
     with pytest.raises(ValueError, match="wasn't found"):
         await writes.create_transaction(
             account_id="does-not-exist", date="2026-09-28", amount=-1,
             merchant_name="x", category_id="cat1",
         )
     # must reject before ever calling the real mutation
-    assert fake_client.calls == [("Web_GetAccountsPage", {"filters": {}})]
+    assert fake_client.calls == [
+        ("Common_GetAccountForEdit", {"id": "does-not-exist"})
+    ]
 
 
 @pytest.mark.asyncio
-async def test_create_transaction_rejects_bank_linked_account(fake_client):
+@pytest.mark.parametrize("overrides", [
+    {"credential": {"id": "cred1", "dataProvider": "plaid"}, "isManual": False,
+     "dataProvider": "plaid"},
+    # M1 regression: a synced account whose credential was detached/nulled
+    # (e.g. a migrated duplicate). The old credential-is-None check let these through.
+    {"credential": None, "isManual": False, "dataProvider": "plaid"},
+    {"credential": None, "isManual": False},
+    {"credential": None, "isManual": None},
+    {"credential": None, "dataProvider": "plaid"},
+])
+async def test_create_transaction_rejects_non_manual_account(fake_client, overrides):
     """Opus review 2026-09-28: Monarch's own mutation only rejects a
-    NONEXISTENT accountId, not a valid-but-linked one -- a linked account's
-    transactions are supposed to come from the bank sync, not manual entry.
-    A manual account's `credential` is null; a linked one has a real
-    credential object."""
-    fake_client.responses["Web_GetAccountsPage"] = _accounts_page_response(
-        [
-            {
-                "id": "linked1",
-                "displayName": "Real Checking",
-                "credential": {"id": "cred1", "dataProvider": "plaid"},
-            }
-        ]
+    NONEXISTENT accountId, not a valid-but-synced one. The gate is the same
+    fail-closed _require_manual that update/delete_account use, so a
+    null-credential synced account is refused too."""
+    fake_client.responses["Common_GetAccountForEdit"] = _account_for_edit(
+        id="linked1", displayName="Real Checking", **overrides
     )
-    with pytest.raises(ValueError, match="bank-linked account"):
+    with pytest.raises(ValueError, match="not positively identified as a manual"):
         await writes.create_transaction(
             account_id="linked1", date="2026-09-28", amount=-1,
             merchant_name="x", category_id="cat1",
         )
-    assert fake_client.calls == [("Web_GetAccountsPage", {"filters": {}})]
+    assert fake_client.calls == [("Common_GetAccountForEdit", {"id": "linked1"})]
+
+
+@pytest.mark.asyncio
+async def test_create_transaction_rejects_account_missing_ismanual_key(fake_client):
+    acct = _account_for_edit()
+    del acct["account"]["isManual"]
+    fake_client.responses["Common_GetAccountForEdit"] = acct
+    with pytest.raises(ValueError, match="manual"):
+        await writes.create_transaction(
+            account_id="acc1", date="2026-09-28", amount=-1,
+            merchant_name="x", category_id="cat1",
+        )
+    assert [c[0] for c in fake_client.calls] == ["Common_GetAccountForEdit"]
 
 
 @pytest.mark.asyncio
@@ -383,8 +441,9 @@ async def test_delete_transaction_sends_wrapped_id(fake_client):
     fake_client.responses["Common_DeleteTransactionMutation"] = {
         "deleteTransaction": {"deleted": True, "errors": None}
     }
-    result = await writes.delete_transaction("t1")
-    assert fake_client.calls == [
+    _seed_reads(fake_client)
+    result = await writes.delete_transaction("t1", "Coffee Shop -5.00")
+    assert _mutation_calls(fake_client) == [
         ("Common_DeleteTransactionMutation", {"input": {"transactionId": "t1"}})
     ]
     assert result == {"deleted_flag": True}
@@ -395,7 +454,8 @@ async def test_delete_transaction_defaults_missing_deleted_to_false(fake_client)
     fake_client.responses["Common_DeleteTransactionMutation"] = {
         "deleteTransaction": {"errors": None}
     }
-    result = await writes.delete_transaction("t1")
+    _seed_reads(fake_client)
+    result = await writes.delete_transaction("t1", "Coffee Shop -5.00")
     assert result == {"deleted_flag": False}
 
 
@@ -481,13 +541,35 @@ async def test_update_transaction_maps_merchant_name_to_name_field(fake_client):
 
 
 @pytest.mark.asyncio
-async def test_update_transaction_ignores_falsy_amount_and_date(fake_client):
+async def test_update_transaction_sends_zero_amount(fake_client):
+    """amount=0 is a real value, not "unset" (an earlier `if amount:` dropped
+    it and sent {id} alone while reporting success)."""
     fake_client.responses["Web_TransactionDrawerUpdateTransaction"] = {
         "updateTransaction": {"transaction": {"id": "t1"}, "errors": None}
     }
-    await writes.update_transaction("t1", amount=0, date="")
+    await writes.update_transaction("t1", amount=0)
     _, variables = fake_client.calls[0]
-    assert variables["input"] == {"id": "t1"}
+    assert variables["input"] == {"id": "t1", "amount": 0}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kwargs", [
+    {}, {"category_id": None},  # nothing to change
+])
+async def test_update_transaction_rejects_noop(fake_client, kwargs):
+    with pytest.raises(ValueError, match="nothing to change"):
+        await writes.update_transaction("t1", **kwargs)
+    assert fake_client.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kwargs", [
+    {"date": ""}, {"amount": float("nan")}, {"amount": float("inf")}, {"amount": True},
+])
+async def test_update_transaction_rejects_bad_amount_or_date(fake_client, kwargs):
+    with pytest.raises(ValueError):
+        await writes.update_transaction("t1", **kwargs)
+    assert fake_client.calls == []
 
 
 @pytest.mark.asyncio
@@ -553,8 +635,9 @@ async def test_mark_stream_as_not_recurring_sends_bare_stream_id(fake_client):
     fake_client.responses["Common_MarkAsNotRecurring"] = {
         "markStreamAsNotRecurring": {"success": True, "errors": None}
     }
-    result = await writes.mark_stream_as_not_recurring("stream123")
-    assert fake_client.calls == [
+    _seed_reads(fake_client)
+    result = await writes.mark_stream_as_not_recurring("stream123", "Netflix")
+    assert _mutation_calls(fake_client) == [
         ("Common_MarkAsNotRecurring", {"streamId": "stream123"})
     ]
     assert result == {"success": True}
@@ -565,7 +648,8 @@ async def test_mark_stream_as_not_recurring_defaults_missing_success_to_false(fa
     fake_client.responses["Common_MarkAsNotRecurring"] = {
         "markStreamAsNotRecurring": {"errors": None}
     }
-    result = await writes.mark_stream_as_not_recurring("stream123")
+    _seed_reads(fake_client)
+    result = await writes.mark_stream_as_not_recurring("stream123", "Netflix")
     assert result == {"success": False}
 
 

@@ -82,3 +82,38 @@ async def test_run_op_refuses_walk_unreachable_ops(monkeypatch, capsys):
     assert exc_info.value.code == 1
     assert called["n"] == 0  # never even built a client, so nothing was sent
     assert "refusing" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_smoke_call_never_prints_email(monkeypatch, capsys):
+    """doctor output is pasted into chat, so the account email must not appear."""
+
+    class FakeClient:
+        async def call(self, op, variables):
+            return {"me": {"id": "u1", "email": "someone@example.com"}}
+
+        async def aclose(self):
+            pass
+
+    monkeypatch.setattr(doctor, "MonarchClient", FakeClient)
+    assert await doctor._check_smoke_call() is True
+    out = capsys.readouterr().out
+    assert "u1" in out
+    assert "someone@example.com" not in out
+
+
+def test_doctor_hints_about_exported_cookies_and_state_dir_mode(monkeypatch, tmp_path, capsys):
+    import os
+    from monarch_client import auth
+    state = tmp_path / "state"
+    state.mkdir()
+    os.chmod(state, 0o755)
+    monkeypatch.setattr(auth, "STATE_DIR", state)
+    monkeypatch.setattr(auth, "load", lambda: auth.AuthMaterial({"a": "x"}, {}, None, None))
+    doctor._check_auth()
+    out = capsys.readouterr().out
+    assert "ONLY these exported cookies" in out
+    assert "chmod 700" in out
+    os.chmod(state, 0o700)
+    doctor._check_auth()
+    assert "chmod 700" not in capsys.readouterr().out

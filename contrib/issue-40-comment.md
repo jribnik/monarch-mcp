@@ -1,3 +1,10 @@
+> **HISTORICAL -- NOT ACTIVE.** Stale draft of an upstream issue/PR for the
+> `monarchmoney-enhanced` library (keithah/monarchmoney-enhanced; whether it was
+> ever filed is not recorded here). That library is abandoned upstream and is no
+> longer a dependency of this repo (removed 2026-09-28), so the bugs described
+> below are moot here. Kept for reference only -- do not file as-is; delete
+> freely.
+
 Confirming this on a fresh install, with a couple of extra details that may help.
 
 On my account Monarch uses **email OTP** (a 6-digit code mailed on each new-device

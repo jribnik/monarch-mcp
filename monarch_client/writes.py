@@ -1,68 +1,77 @@
 """
-Write-side MCP tools, reimplemented on monarch_client.
+Write-side MCP tools, built on monarch_client (plus the shared safety gates
+the sibling write modules import from here).
 
 Deliberately no generic "execute_mutation" escape hatch: only the vendored,
-named mutations below are callable, so a prompt-injection or a model
-mistake can't reach an arbitrary mutation. Each function's signature
-mirrors its server.py counterpart exactly, same as reads.py.
+named mutations are callable, so a prompt-injection or a model mistake can't
+reach an arbitrary mutation. Each function's signature mirrors its server.py
+counterpart exactly, same as reads.py.
 
-12 functions in this module (11 write tools at the tool level: the README table
-counts preview_transaction_rule, a dry-run, as a read) -- create_tag, delete_tag, preview_transaction_rule,
+This module: create_tag, delete_tag, preview_transaction_rule,
 create_transaction_rule, delete_transaction_rule, recategorize_transaction,
 update_transaction, set_transaction_tags, mark_stream_as_not_recurring,
-create_transaction, delete_transaction, create_manual_account -- each
-captured and/or verified against a dedicated, disposable monarch-sandbox
-account (see operations/__init__.py's PROVENANCE for each op's exact
-provenance; three -- delete_transaction_rule, mark_stream_as_not_recurring,
-and delete_transaction -- were verified by direct functional call rather
-than a UI-driven HAR capture, each documented as an explicit exception in
-its own .graphql file). See operations/README.md.
+create_transaction, delete_transaction, create_manual_account -- 12
+functions, 11 write tools (preview_transaction_rule is a dry-run query and is
+counted with the reads). The rest of the 30 write tools live in
+writes_categories.py (8), writes_accounts.py (8) and writes_splits_rules.py
+(3). See README.md for the full tool table and operations/__init__.py's
+PROVENANCE for each op's provenance.
 
-delete_tag was added 2026-09-28, closing a gap left open since the
-original 8-tool build (create_tag shipped with no delete counterpart) --
-added while monarch-sandbox still existed, ahead of its planned deletion
-(it's the safety net for developing/verifying any write, so remaining
-write-path work was prioritized while it was still available -- see
-project memory).
+Safety layers, outermost first:
+  1. gate.py's MONARCH_CLIENT_ENABLE_WRITES master switch, checked by every
+     tool (_require_writes) and again by _call / MonarchClient.call.
+  2. _require_confirm: the 8 destructive tools (delete_transaction,
+     delete_tag, delete_transaction_rule, mark_stream_as_not_recurring here;
+     delete_account, delete_savings_goal in writes_accounts.py;
+     delete_category_group, delete_category in writes_categories.py) take a
+     REQUIRED `confirm` that must echo a value derived from a FRESH read done
+     inside the tool: the target's name, except delete_transaction
+     ("<merchant> <amount>", see transaction_confirm_token) and
+     delete_transaction_rule (its first criterion value / category name, see
+     rule_confirm_token). They refuse before sending anything otherwise.
+     create_transaction_rule / update_transaction_rule with
+     apply_to_existing_transactions=True need confirm == str(preview
+     totalCount), and the apply_to_future=True budget tools need the
+     category / goal name or (flex) the month's current amount, each from a
+     fresh read. A confirm proves the caller looked at the target; it is
+     not authentication (the model supplies it).
+  3. Per-tool client-side validation: _require_manual (fail-closed
+     manual-account check for create_transaction/update_account/
+     delete_account) and _verify_merchant_name_exists (rule merchant names).
 
-set_merchant_name (preview/create_transaction_rule) was also added
-2026-09-28. Its real shape -- a merchant NAME string, not an id -- and the
-need for _verify_merchant_name_exists were both discovered by live testing
-against monarch-sandbox: setMerchantAction has no server-side validation at
-all and silently creates a brand-new garbage merchant named after whatever
-string it's given (reproduced with both a raw id and a typo'd name; preview
-doesn't catch it either -- its `newName` field just echoes the input back
-unresolved). See _verify_merchant_name_exists's docstring below.
+Verification history: the original write ops were captured from / verified
+against a dedicated, disposable monarch-sandbox Monarch account, which has
+since been DELETED (api-recon still registers a `monarch-sandbox` adapter
+site name, with no account behind it) -- the "verified live against
+monarch-sandbox" remarks in docstrings and PROVENANCE notes are dated history,
+not a testing path you can still use. A NEW write op must now be verified some
+other way (see operations/README.md, "Adding a write operation").
+Three ops -- delete_transaction_rule, mark_stream_as_not_recurring and
+delete_transaction -- were verified by direct functional call rather than a
+UI-driven capture, each documented as an explicit exception in its own
+.graphql file.
 
-create_transaction and create_manual_account were also added 2026-09-28,
-closing the last two capability gaps flagged by an earlier design review
-(manual transaction/account creation). Both mutations DO validate
-accountId/categoryId/type/subtype EXISTENCE server-side (a bad id raises
-or returns a real errors.message rather than silently succeeding, verified
-live) -- unlike setMerchantAction. But an Opus review the same day caught
-that Monarch's existence check doesn't catch a valid-but-wrong-KIND id: a
-real, bank-linked accountId passed to create_transaction wouldn't be
-rejected, and would create a phantom entry on a real bank feed that has no
-business being manually entered there regardless of whether it could later
-be deleted -- see _verify_account_is_manual, added as this function's own
-client-side gate. create_manual_account's type/subtype pair genuinely
-doesn't need one (verified live: an invalid pair raises).
-
-delete_transaction was added the same day (2026-09-28), closing
-create_transaction's own missing counterpart -- unlike the accountId gate
-above, this was a pure capability gap (no way to undo ANY mistaken
-transaction, not just ones on the wrong account kind), also flagged by the
-same Opus review. NOT captured via api-recon (never driven through its UI
-automation) -- recovered from the old abandoned monarchmoney-enhanced
-library's own hand-authored, long-production-tested query, same recovery
-pattern as delete_transaction_rule. Verified live against monarch-sandbox:
-created a real transaction, deleted it, confirmed via a follow-up read
-that it's actually gone.
+Gotchas discovered live and enforced here:
+  - setMerchantAction (preview/create_transaction_rule's set_merchant_name)
+    takes a merchant NAME string and has no server-side validation: a name
+    that doesn't exactly match an existing merchant silently CREATES a new
+    garbage merchant (preview doesn't catch it either; its `newName` just
+    echoes the input). Hence _verify_merchant_name_exists.
+  - create_transaction / create_manual_account DO validate accountId/
+    categoryId/type/subtype existence server-side, but Monarch does not
+    reject a valid-but-bank-synced accountId; hence the fail-closed
+    _require_manual gate (a phantom manual entry on a bank feed confuses that
+    account's balance/reconciliation even if it could later be deleted).
+  - delete_transaction works on any transaction, bank-synced included, same
+    as the web app's delete button, and has no undo -- hence its confirm gate.
+    (Its query was recovered from the legacy monarchmoney-enhanced library,
+    the same recovery pattern as delete_transaction_rule.)
 """
 
 from __future__ import annotations
 
-import os
+import math
+from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 
 from . import MonarchClient, gate, operations, project
@@ -82,10 +91,6 @@ WRITES_ENV = gate.WRITES_ENV
 def writes_status() -> bool:
     """Public read-only view of the gate (for doctor and diagnostics):
     True iff MONARCH_CLIENT_ENABLE_WRITES=1."""
-    return gate.writes_enabled()
-
-
-def _writes_enabled() -> bool:
     return gate.writes_enabled()
 
 
@@ -158,39 +163,63 @@ async def _verify_merchant_name_exists(name: str) -> None:
     )
 
 
-async def _verify_account_is_manual(account_id: str) -> None:
-    """Added after Opus review 2026-09-28. create_transaction is meant for
-    manual (non-Plaid) accounts only, but nothing was stopping it being
-    called against a real, bank-linked account -- Monarch's own mutation
-    only rejects a NONEXISTENT accountId (verified live: "Account matching
-    query does not exist."), it doesn't reject a valid-but-linked one. This
-    gate stays even now that delete_transaction exists (below): a manual
-    transaction forced onto a linked account is still a phantom entry that
-    doesn't belong on a real bank feed, whether or not it could later be
-    cleaned up -- a linked account's transactions are supposed to come from
-    the bank sync, not manual entry, and quietly injecting one risks
-    confusing that account's balance/reconciliation regardless. Gate here
-    instead: a manual account's `credential` field is null; a linked one
-    always has a real credential object (dataProvider, institution, etc.)
-    -- see Web_GetAccountsPage.graphql's AccountListItemFields fragment."""
-    accounts = await reads.list_accounts()
-    match = next(
-        (a for a in accounts.get("accounts") or [] if a.get("id") == account_id),
-        None,
-    )
-    if match is None:
+async def _get_account_for_edit(account_id: str) -> dict[str, Any]:
+    """Fresh single-account read (Common_GetAccountForEdit) shared by the
+    manual-account write gates here and in writes_accounts.py."""
+    data = await _call("Common_GetAccountForEdit", {"id": account_id})
+    account = data.get("account")
+    if not account:
         raise ValueError(
-            f"account_id={account_id!r} wasn't found in list_accounts() -- "
-            "double-check the id before retrying."
+            f"account_id={account_id!r} wasn't found -- double-check the id."
         )
-    if match.get("credential") is not None:
+    return account
+
+
+def _require_manual(account: dict[str, Any], tool: str) -> None:
+    """Fail closed: refuse unless the account is POSITIVELY identified as
+    manual (isManual is exactly True, no credential, no dataProvider).
+
+    This replaced create_transaction's earlier _verify_account_is_manual,
+    which only checked `credential is None` and so FAILED OPEN for any
+    bank-synced account whose credential had been detached/nulled (e.g. a
+    migrated duplicate): such an account has isManual false/missing and/or a
+    dataProvider, and now stays refused. Monarch's own mutations only reject
+    a NONEXISTENT accountId, not a valid-but-synced one, and a manual
+    transaction forced onto a bank feed is a phantom entry that confuses the
+    account's balance/reconciliation even if it could later be deleted."""
+    if (
+        account.get("isManual") is not True
+        or account.get("credential") is not None
+        or account.get("dataProvider")
+    ):
         raise ValueError(
-            f"account_id={account_id!r} ({match.get('displayName')!r}) is a "
-            "bank-linked account (it has a credential), not a manual one. "
-            "create_transaction is for MANUAL accounts only -- a linked "
-            "account's transactions are supposed to come from the bank "
-            "sync, not manual entry. Use create_manual_account first if "
-            "you need a new account to record this against."
+            f"{tool}: account {account.get('id')!r} ({account.get('displayName')!r}) "
+            "is not positively identified as a manual account (bank-linked, or missing/false isManual). Only MANUAL "
+            "accounts can be changed or deleted through this server."
+        )
+
+
+def _require_confirm(
+    tool: str, confirm: Any, accepted: Any, target: str
+) -> None:
+    """Confirmation gate for destructive / wide-blast-radius writes.
+
+    All write tools are live whenever MONARCH_CLIENT_ENABLE_WRITES=1, so a
+    model mistake (wrong id, stale id, prompt injection) goes straight to the
+    real account. Each destructive tool therefore takes a REQUIRED `confirm`
+    argument that must exactly echo (case-sensitive) the target as returned
+    by a FRESH read performed inside the tool -- forcing the caller to have
+    looked at what it is about to destroy, and refusing a stale or mistyped
+    id. `accepted` is the set of acceptable echoes (falsy entries ignored);
+    the refusal names them so the caller can retry only after the user
+    has confirmed that specific target."""
+    options = sorted({a for a in accepted if a})
+    if not isinstance(confirm, str) or not confirm or confirm not in options:
+        raise ValueError(
+            f"{tool}: confirm={confirm!r} does not exactly match {target} "
+            f"(expected one of {options}) -- NOT proceeding. Only retry with "
+            "the exact value if the user has explicitly confirmed this "
+            "specific target."
         )
 
 
@@ -241,13 +270,17 @@ async def create_tag(name: str, color: str) -> dict[str, Any]:
     return project.create_tag_result(data)
 
 
-async def delete_tag(tag_id: str) -> dict[str, Any]:
-    """Vendored 2026-09-28 (was previously a documented gap -- create_tag
-    with no delete counterpart). Verified live against monarch-sandbox:
-    created a real tag, deleted it via this mutation, confirmed via a
-    follow-up get_tags call the account was back to exactly its original
-    5 default tags."""
+async def delete_tag(tag_id: str, confirm: str) -> dict[str, Any]:
+    """Vendored 2026-09-28 (closing create_tag's missing counterpart);
+    verified live then: created a tag, deleted it, confirmed via a follow-up
+    get_tags call it was gone. `confirm` must exactly equal the tag's current
+    name, checked against a fresh get_tags read (unknown ids are refused)."""
     _require_writes("delete_tag")
+    tags = (await reads.get_tags()).get("householdTransactionTags") or []
+    tag = next((x for x in tags if x.get("id") == tag_id), None)
+    if tag is None:
+        raise ValueError(f"delete_tag: tag_id={tag_id!r} wasn't found in get_tags.")
+    _require_confirm("delete_tag", confirm, [tag.get("name")], f"the tag's name {tag.get('name')!r}")
     data = await _call("Common_DeleteHouseholdTransactionTag", {"tagId": tag_id})
     return project.delete_tag_result(data)
 
@@ -288,7 +321,13 @@ async def create_transaction_rule(
     set_category_action: Optional[str] = None,
     set_merchant_name: Optional[str] = None,
     apply_to_existing_transactions: bool = False,
+    confirm: Optional[str] = None,
 ) -> dict[str, Any]:
+    """With apply_to_existing_transactions=True the rule rewrites every
+    matching HISTORICAL transaction, so `confirm` is then required and must
+    equal str(totalCount) of a fresh preview of this exact rule -- i.e. the
+    caller must have looked at how many existing transactions it will change.
+    Ignored (not required) for a forward-only rule."""
     _require_writes("create_transaction_rule")
     if set_merchant_name is not None:
         await _verify_merchant_name_exists(set_merchant_name)
@@ -301,13 +340,84 @@ async def create_transaction_rule(
         set_category_action=set_category_action,
         set_merchant_name=set_merchant_name,
     )
+    if apply_to_existing_transactions:
+        preview = await _call(
+            "Common_PreviewTransactionRule",
+            {"rule": {**rule_input, "applyToExistingTransactions": False}, "offset": 0},
+        )
+        total = (project.preview_transaction_rule_result(preview)
+                 .get("transactionRulePreview") or {}).get("totalCount")
+        if total is None:
+            raise ValueError(
+                "create_transaction_rule: couldn't determine how many existing "
+                "transactions this rule matches (preview returned no totalCount) "
+                "-- NOT applying it retroactively."
+            )
+        _require_confirm(
+            "create_transaction_rule", confirm, [str(total)],
+            f"the number of existing transactions this rule would change ({total}); "
+            "pass confirm=str(that count) after running preview_transaction_rule",
+        )
     rule_input["applyToExistingTransactions"] = apply_to_existing_transactions
     data = await _call("Common_CreateTransactionRuleMutationV2", {"input": rule_input})
     return project.create_transaction_rule_result(data)
 
 
-async def delete_transaction_rule(rule_id: str) -> dict[str, Any]:
+def rule_confirm_token(rule: dict[str, Any]) -> str:
+    """What delete_transaction_rule's `confirm` must equal: a human-readable
+    value that only a fresh get_transaction_rules read reveals (rules have no
+    name, and their id is already passed as rule_id, so echoing the id would
+    prove nothing). In order: the first merchant-name criterion's value, else
+    the first original-statement criterion's, else the first merchantCriteria
+    value, else the setCategoryAction category's name, else the literal
+    fallback "rule <id>". All of those fields are selected by
+    Web_GetTransactionRules. This is NOT unique (two rules may match
+    "amazon"); the target is still pinned by rule_id -- the gate only proves
+    the caller looked at the rule it is about to delete."""
+    for key in ("merchantNameCriteria", "originalStatementCriteria", "merchantCriteria"):
+        crits = rule.get(key) or []
+        # No api-recon capture shows merchantCriteria's real shape, so accept a
+        # list of criteria or a single criterion object (iterating a dict would
+        # yield key strings and make such a rule undeletable).
+        if isinstance(crits, dict):
+            crits = [crits]
+        elif not isinstance(crits, list):
+            continue
+        for crit in crits:
+            if not isinstance(crit, dict):
+                continue
+            value = crit.get("value")
+            if isinstance(value, str) and value:
+                return value
+    category = (rule.get("setCategoryAction") or {}).get("name")
+    if isinstance(category, str) and category:
+        return category
+    return f"rule {rule.get('id')}"
+
+
+async def delete_transaction_rule(rule_id: str, confirm: str) -> dict[str, Any]:
+    """IRREVERSIBLE. A rule has no name and its id is already the rule_id
+    argument, so `confirm` must instead equal rule_confirm_token(rule): the
+    rule's first merchant-name criterion value, else its first
+    original-statement criterion value, else its first merchantCriteria value,
+    else its set-category action's category name, else "rule <id>", taken from a fresh
+    get_transaction_rules read. The gate proves the caller read this rule
+    (and an unknown id is refused); it does not make the target unique -- the
+    id does that."""
     _require_writes("delete_transaction_rule")
+    rules = (await reads.get_transaction_rules()).get("transactionRules") or []
+    rule = next((r for r in rules if str(r.get("id")) == str(rule_id)), None)
+    if rule is None:
+        raise ValueError(
+            f"delete_transaction_rule: rule_id={rule_id!r} wasn't found in "
+            "get_transaction_rules."
+        )
+    token = rule_confirm_token(rule)
+    _require_confirm(
+        "delete_transaction_rule", confirm, [token],
+        f"the rule's first criterion value / category name {token!r} "
+        "(see get_transaction_rules)",
+    )
     data = await _call("Common_DeleteTransactionRule", {"id": rule_id})
     return project.delete_transaction_rule_result(data)
 
@@ -326,15 +436,16 @@ async def create_transaction(
     server-side for EXISTENCE and returns a real errors.message with
     transaction=null on a nonexistent id, verified live -- see
     Common_CreateTransactionMutation's PROVENANCE note -- but does not
-    reject a valid, bank-linked accountId, so _verify_account_is_manual
-    runs first (see its own docstring for why this gate stays even though
-    delete_transaction below exists). merchant_name itself is NOT
+    reject a valid, bank-linked accountId, so the fail-closed
+    _require_manual gate runs first against a fresh Common_GetAccountForEdit
+    read (see its docstring; this gate stays even though delete_transaction
+    below exists). merchant_name itself is NOT
     validated by either Monarch or this client -- an arbitrary string
     creates a new merchant if it doesn't match an existing one exactly,
     same as the real web app's manual-entry form; that's expected here,
     unlike set_merchant_name on the rule tools."""
     _require_writes("create_transaction")
-    await _verify_account_is_manual(account_id)
+    _require_manual(await _get_account_for_edit(account_id), "create_transaction")
     data = await _call(
         "Common_CreateTransactionMutation",
         {
@@ -352,18 +463,64 @@ async def create_transaction(
     return project.create_transaction_result(data)
 
 
-async def delete_transaction(transaction_id: str) -> dict[str, Any]:
-    """Added 2026-09-28, closing create_transaction's missing counterpart --
-    flagged as a real irreversibility gap by an Opus review (a mistaken
-    manual transaction had no way to be undone through this server).
+def transaction_confirm_token(txn: dict[str, Any]) -> str:
+    """What delete_transaction's `confirm` must equal: "<merchant name>
+    <amount>" with the amount signed, fixed to two decimals and last, e.g.
+    "Amazon -12.34" (expense) or "Acme Payroll 2500.00" (credit); when the
+    transaction has no merchant, just the amount ("-12.34"). The amount is
+    rounded half-even; the merchant name is compared exactly as read -- no
+    Unicode normalization, exact spacing. A mismatch refuses the call and the
+    error shows the expected value (a confirm is not authentication, see the
+    README). Built from a fresh get_transaction_details read. The merchant name alone isn't unique
+    (every Amazon purchase shares it), so the amount is what pins it to this
+    transaction. Raises ValueError if the read has no usable amount (the gate
+    fails closed rather than falling back to something weaker)."""
+    amount = txn.get("amount")
+    if isinstance(amount, bool) or not isinstance(amount, (int, float, str)):
+        raise ValueError("delete_transaction: the transaction has no readable amount")
+    try:
+        d = Decimal(str(amount))
+        if not d.is_finite():
+            raise InvalidOperation
+        d = d.quantize(Decimal("0.01"))
+    except InvalidOperation:
+        raise ValueError(
+            f"delete_transaction: unreadable transaction amount {amount!r}"
+        ) from None
+    if d == 0:
+        d = abs(d)  # never "-0.00"
+    merchant = (txn.get("merchant") or {}).get("name")
+    return f"{merchant} {d}" if merchant else str(d)
+
+
+async def delete_transaction(transaction_id: str, confirm: str) -> dict[str, Any]:
+    """IRREVERSIBLE. Added 2026-09-28, closing create_transaction's missing
+    counterpart -- flagged as a real irreversibility gap by an Opus review (a
+    mistaken manual transaction had no way to be undone through this server).
     Recovered from the old abandoned library (see
     Common_DeleteTransactionMutation's PROVENANCE note), verified live
     against monarch-sandbox: created a real transaction, deleted it,
     confirmed via a follow-up get_transaction_details call that it's
     actually gone. Works on any transaction this account can see, not just
-    manually-created ones -- same as the real web app's delete button --
-    so use with the same care as any other destructive write."""
+    manually-created ones, INCLUDING bank-synced transactions -- same as the
+    real web app's delete button -- so it is gated: `confirm` must exactly
+    equal "<merchant name> <amount>" (amount signed, two decimals, e.g.
+    "Amazon -12.34"), or just the amount ("-12.34") when the transaction has
+    no merchant -- see transaction_confirm_token -- as returned by a FRESH
+    get_transaction_details read. The amount is included because merchant
+    names repeat. An unknown id is refused."""
     _require_writes("delete_transaction")
+    txn = (await reads.get_transaction_details(transaction_id)).get("getTransaction")
+    if not txn:
+        raise ValueError(
+            f"delete_transaction: transaction_id={transaction_id!r} wasn't found."
+        )
+    token = transaction_confirm_token(txn)
+    _require_confirm(
+        "delete_transaction", confirm, [token],
+        f"\"<merchant name> <amount>\" (just the amount if no merchant) = {token!r} "
+        f"(date {txn.get('date')})",
+    )
     data = await _call(
         "Common_DeleteTransactionMutation", {"input": {"transactionId": transaction_id}}
     )
@@ -412,19 +569,26 @@ async def _update_transaction(
     reviewed: Optional[bool] = None,
 ) -> dict[str, Any]:
     """Shared by recategorize_transaction and update_transaction -- same
-    mutation, same field-name mapping verified live against
-    monarch-sandbox (see operations/__init__.py's PROVENANCE note: `name`
-    for merchant, not `merchantName`; amount/date only sent when truthy,
-    matching keithah/monarchmoney-enhanced@159d36e monarchmoney/monarchmoney.py's own guard against the
-    API rejecting empty values for those two fields)."""
+    mutation, same field-name mapping verified live (see
+    operations/__init__.py's PROVENANCE note: `name` for merchant, not
+    `merchantName`). Only fields that are not None are sent; an update that
+    would send nothing but the id is refused."""
     input_: dict[str, Any] = {"id": transaction_id}
     if category_id is not None:
         input_["category"] = category_id
     if merchant_name is not None:
         input_["name"] = merchant_name
-    if amount:
+    if amount is not None:
+        # `is not None`, not truthiness: amount=0 is a real value that an
+        # earlier `if amount:` silently dropped, sending {id} alone while
+        # reporting success.
+        if isinstance(amount, bool) or not isinstance(amount, (int, float)) \
+                or not math.isfinite(amount):
+            raise ValueError(f"update_transaction: amount={amount!r} must be a finite number")
         input_["amount"] = amount
-    if date:
+    if date is not None:
+        if not date:
+            raise ValueError("update_transaction: date must not be empty")
         input_["date"] = date
     if hide_from_reports is not None:
         input_["hideFromReports"] = bool(hide_from_reports)
@@ -444,6 +608,12 @@ async def _update_transaction(
         input_["reviewed"] = True
     if notes is not None:
         input_["notes"] = notes
+
+    if len(input_) == 1:
+        raise ValueError(
+            "update_transaction: nothing to change -- pass at least one field "
+            "besides transaction_id"
+        )
 
     data = await _call(
         "Web_TransactionDrawerUpdateTransaction",
@@ -494,7 +664,28 @@ async def set_transaction_tags(transaction_id: str, tag_ids: list[str]) -> dict[
     return project.set_transaction_tags_result(data)
 
 
-async def mark_stream_as_not_recurring(stream_id: str) -> dict[str, Any]:
+async def mark_stream_as_not_recurring(stream_id: str, confirm: str) -> dict[str, Any]:
+    """`confirm` must exactly equal the stream's merchant name (or stream
+    name), checked against a fresh get_recurring_transactions read (current
+    month window); a stream not visible there is refused."""
     _require_writes("mark_stream_as_not_recurring")
+    items = (await reads.get_recurring_transactions()).get("recurring_items") or []
+    stream = next(
+        (
+            i["stream"] for i in items
+            if (i.get("stream") or {}).get("id") == stream_id
+        ),
+        None,
+    )
+    if stream is None:
+        raise ValueError(
+            f"mark_stream_as_not_recurring: stream_id={stream_id!r} wasn't found "
+            "in get_recurring_transactions (current month)."
+        )
+    _require_confirm(
+        "mark_stream_as_not_recurring", confirm,
+        [(stream.get("merchant") or {}).get("name"), stream.get("name")],
+        "the stream's merchant name",
+    )
     data = await _call("Common_MarkAsNotRecurring", {"streamId": stream_id})
     return project.mark_stream_as_not_recurring_result(data)

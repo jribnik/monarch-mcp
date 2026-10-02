@@ -9,6 +9,17 @@ reads and the dry-run preview_transaction_rule are unaffected. Added
 allowlist) and skylight_client (hard gates), monarch_client had no gate at
 all, and delete_transaction/delete_tag/delete_transaction_rule act on the
 real, bank-synced account.
+
+This is only the coarse, all-or-nothing layer. Within it, each of the 8
+destructive tools (delete_transaction, delete_tag, delete_transaction_rule,
+delete_category_group, delete_category, delete_savings_goal, delete_account,
+mark_stream_as_not_recurring) also requires a per-call `confirm` that must
+echo a value taken from a fresh read made inside the tool
+(writes._require_confirm; added after the 2026-10-01 review, when all 30
+write tools were live globally with only delete_account gated). So do the
+wide-blast-radius flags (apply_to_future=True on the budget tools,
+apply_to_existing_transactions=True on create/update_transaction_rule). A
+confirm proves the caller looked at the target; it is not authentication.
 """
 
 from __future__ import annotations

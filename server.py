@@ -6,10 +6,28 @@ Exposes read/write tools over your Monarch account so Claude can help clean
 things up conversationally (find uncategorized transactions, recategorize, tag,
 review budgets, etc.).
 
-Auth: reuses an access token imported from an already-completed api-recon
-Monarch login (see monarch_client/auth.py). This server never sees your
-password -- only the saved Monarch session, exported via `recon
-export-session`.
+Auth: reuses the session cookies (plus the User-Agent / CSRF headers) imported
+from an already-completed api-recon Monarch login (see monarch_client/auth.py).
+This server never sees your password -- only the saved Monarch session,
+exported via `recon export-session`.
+
+Writes: every write tool is refused unless the server's environment sets
+MONARCH_CLIENT_ENABLE_WRITES=1 (see monarch_client/gate.py). On top of that
+master switch, each of the 8 destructive tools (delete_transaction, delete_tag,
+delete_transaction_rule, delete_category_group, delete_category,
+delete_savings_goal, delete_account, mark_stream_as_not_recurring) takes a
+REQUIRED `confirm` that must echo a value taken from a fresh read made inside
+the tool (the target's name; for delete_transaction "<merchant> <amount>"; for
+delete_transaction_rule the rule's first criterion value), and the
+wide-blast-radius flags require `confirm` too: set_budget_amount (category
+name) / set_savings_goal_budget_amount (goal name) / set_flex_budget_amount
+(the current flex amount for the month) with apply_to_future=True, and
+create_transaction_rule / update_transaction_rule with
+apply_to_existing_transactions=True (the fresh preview's match count). The
+confirm proves the caller looked at the target; it is not authentication. Every tool wrapper below passes its arguments to the
+monarch_client function BY KEYWORD, so a reordered signature can never
+silently route a value to the wrong parameter (tests/test_server_tools.py
+asserts the mapping).
 
 Built entirely on `monarch_client` (this repo's own package, see its module
 docstring) -- no dependency on the abandoned `monarchmoney-enhanced` library.
@@ -109,7 +127,7 @@ async def get_transactions(
 @mcp.tool()
 async def get_transaction_details(transaction_id: str) -> dict[str, Any]:
     """Get full details for one transaction (splits, category, tags, notes)."""
-    return await client_reads.get_transaction_details(transaction_id)
+    return await client_reads.get_transaction_details(transaction_id=transaction_id)
 
 
 @mcp.tool()
@@ -171,7 +189,7 @@ async def update_transaction(
     not with it. reviewed=False is not supported.
     """
     return await client_writes.update_transaction(
-        transaction_id,
+        transaction_id=transaction_id,
         category_id=category_id,
         merchant_name=merchant_name,
         amount=amount,
@@ -200,10 +218,13 @@ async def create_tag(name: str, color: str) -> dict[str, Any]:
 
 
 @mcp.tool()
-async def delete_tag(tag_id: str) -> dict[str, Any]:
+async def delete_tag(tag_id: str, confirm: str) -> dict[str, Any]:
     """Delete a transaction tag by id (from get_tags). Does not affect the
-    transactions it was applied to, only removes the tag itself."""
-    return await client_writes.delete_tag(tag_id)
+    transactions it was applied to, only removes the tag itself. IRREVERSIBLE.
+    confirm is REQUIRED and must exactly equal the tag's current name
+    (case-sensitive; checked against a fresh read). Only call when the user
+    explicitly asked to delete that specific tag."""
+    return await client_writes.delete_tag(tag_id=tag_id, confirm=confirm)
 
 
 @mcp.tool()
@@ -282,6 +303,7 @@ async def create_transaction_rule(
     set_category_action: Optional[str] = None,
     set_merchant_name: Optional[str] = None,
     apply_to_existing_transactions: bool = False,
+    confirm: Optional[str] = None,
 ) -> dict[str, Any]:
     """
     Create a new auto-categorization rule. ALWAYS call preview_transaction_rule
@@ -293,7 +315,12 @@ async def create_transaction_rule(
     apply_to_existing_transactions=True only if you also want it retroactively
     applied to every matching historical transaction (defaults to False --
     forward-looking only, which is usually what you want if you've already
-    fixed the historical ones by hand).
+    fixed the historical ones by hand). apply_to_existing_transactions=True
+    REQUIRES confirm=str(N), where N is the number of existing transactions the
+    rule will change -- the server re-runs the preview itself and refuses unless
+    confirm equals its totalCount, so run preview_transaction_rule first, check
+    the count with the user, then echo it. confirm is ignored for a
+    forward-only rule.
 
     set_merchant_name must be an EXACT existing merchant name (see
     preview_transaction_rule's docstring) -- this is enforced, since Monarch
@@ -309,30 +336,42 @@ async def create_transaction_rule(
         set_category_action=set_category_action,
         set_merchant_name=set_merchant_name,
         apply_to_existing_transactions=apply_to_existing_transactions,
+        confirm=confirm,
     )
 
 
 @mcp.tool()
-async def delete_transaction_rule(rule_id: str) -> dict[str, Any]:
+async def delete_transaction_rule(rule_id: str, confirm: str) -> dict[str, Any]:
     """
-    Delete a transaction rule by id (from get_transaction_rules). Note: the API's
+    Delete a transaction rule by id (from get_transaction_rules). IRREVERSIBLE.
+    A rule has no name and its id is already rule_id, so confirm is REQUIRED and
+    must equal the rule's first merchant-name criterion value, else its first
+    original-statement criterion value, else its first merchantCriteria value,
+    else its set-category action's category name, else "rule <id>" -- read it from get_transaction_rules (the tool
+    re-reads it itself; an unknown id or a mismatch is refused). This proves you
+    looked at the rule; it is not unique (the id picks the rule). Note: the API's
     `deleted` flag is unreliable (returns False even on success; only an actual
     failure raises an error) -- verify by calling get_transaction_rules again.
     """
-    return await client_writes.delete_transaction_rule(rule_id)
+    return await client_writes.delete_transaction_rule(rule_id=rule_id, confirm=confirm)
 
 
 @mcp.tool()
-async def mark_stream_as_not_recurring(stream_id: str) -> dict[str, Any]:
+async def mark_stream_as_not_recurring(stream_id: str, confirm: str) -> dict[str, Any]:
     """
     Dismiss a recurring transaction stream (get its id from get_recurring_transactions).
+    confirm is REQUIRED and must exactly equal the stream's merchant name (or its
+    stream name) as shown by get_recurring_transactions for the current month;
+    a stream not visible there is refused.
     Use when a subscription was cancelled but old transactions still get grouped as
     recurring, or one-time purchases got mistakenly detected as a pattern. NOT for
     duplicate streams caused by a merchant split -- merge those instead (see
     get_recurring_transactions' docstring); once merged, the duplicate stream
     disappears on its own without needing this.
     """
-    return await client_writes.mark_stream_as_not_recurring(stream_id)
+    return await client_writes.mark_stream_as_not_recurring(
+        stream_id=stream_id, confirm=confirm
+    )
 
 
 @mcp.tool()
@@ -348,9 +387,10 @@ async def create_transaction(
     spending. date is 'YYYY-MM-DD'. amount is signed like every other tool here:
     negative = expense, positive = income/credit. Use get_categories for category_id
     and list_accounts for account_id -- account_id MUST be a manual account (this is
-    enforced: a bank-linked account_id is rejected before the mutation ever fires, since
-    a linked account's transactions are supposed to come from the bank sync, not manual
-    entry). A nonexistent account_id/category_id also returns a real error, doesn't fail
+    enforced against a fresh read of the account: anything not positively identified as
+    manual -- bank-linked, or a synced account whose credential was detached -- is
+    rejected before the mutation ever fires, since a linked account's transactions are
+    supposed to come from the bank sync, not manual entry). A nonexistent account_id/category_id also returns a real error, doesn't fail
     silently. merchant_name is NOT validated against existing merchants (unlike
     create_transaction_rule's set_merchant_name) -- a new string creates a new merchant,
     same as the real app's manual-entry form. Made a mistake? Use delete_transaction.
@@ -365,14 +405,22 @@ async def create_transaction(
 
 
 @mcp.tool()
-async def delete_transaction(transaction_id: str) -> dict[str, Any]:
+async def delete_transaction(transaction_id: str, confirm: str) -> dict[str, Any]:
     """
     Delete a transaction by id. Works on any transaction this account can see
     (manual or bank-synced), same as the real app's delete button -- not limited to
-    ones created via create_transaction. There is no undo; use get_transaction_details
-    first if you're not certain you have the right id.
+    ones created via create_transaction. There is no undo. confirm is REQUIRED and
+    must exactly equal "<merchant name> <amount>" -- the merchant name, one
+    space, then the signed amount with two decimals, e.g. "Amazon -12.34" (an
+    expense) or "Acme Payroll 2500.00" (a credit); with no merchant, just the
+    amount ("-12.34") -- from get_transaction_details, which the tool re-reads
+    itself (merchant names repeat, so the amount is what pins the transaction); an
+    unknown id or a mismatch is refused before anything is sent. Only
+    call when the user explicitly asked to delete that specific transaction.
     """
-    return await client_writes.delete_transaction(transaction_id)
+    return await client_writes.delete_transaction(
+        transaction_id=transaction_id, confirm=confirm
+    )
 
 
 @mcp.tool()
@@ -411,8 +459,10 @@ async def create_category_group(
     rollover_start_month is an ISO date (first of a month, default current
     month). Returns the new group (id, name, type, order, ...)."""
     return await client_writes_categories.create_category_group(
-        name, type, group_level_budgeting_enabled, rollover_enabled,
-        rollover_start_month, rollover_type)
+        name=name, type=type,
+        group_level_budgeting_enabled=group_level_budgeting_enabled,
+        rollover_enabled=rollover_enabled,
+        rollover_start_month=rollover_start_month, rollover_type=rollover_type)
 
 
 @mcp.tool()
@@ -429,20 +479,27 @@ async def update_category_group(
     """Update a category group (rename, budgeting flags). Only the fields you
     pass are changed. Get group ids from get_categories."""
     return await client_writes_categories.update_category_group(
-        group_id, name, group_level_budgeting_enabled, rollover_enabled,
-        rollover_start_month, rollover_type, rollover_starting_balance,
-        budget_variability)
+        group_id=group_id, name=name,
+        group_level_budgeting_enabled=group_level_budgeting_enabled,
+        rollover_enabled=rollover_enabled,
+        rollover_start_month=rollover_start_month, rollover_type=rollover_type,
+        rollover_starting_balance=rollover_starting_balance,
+        budget_variability=budget_variability)
 
 
 @mcp.tool()
 async def delete_category_group(
-    group_id: str, move_to_group_id: Optional[str] = None
+    group_id: str, confirm: str, move_to_group_id: Optional[str] = None
 ) -> dict[str, Any]:
-    """Delete a category group. Fails with "Category group is not empty" if it
-    still has categories -- pass move_to_group_id to re-home them, or move
-    them first (update_category with group_id). Returns {deleted, errors}."""
+    """Delete a category group. IRREVERSIBLE. confirm is REQUIRED and must
+    exactly equal the group's current name (case-sensitive; checked against a
+    fresh get_categories read; unknown ids are refused). Fails with "Category
+    group is not empty" if it still has categories -- pass move_to_group_id to
+    re-home them, or move them first (update_category with group_id). Only call
+    when the user explicitly asked to delete that group. Returns
+    {deleted, errors}."""
     return await client_writes_categories.delete_category_group(
-        group_id, move_to_group_id)
+        group_id=group_id, confirm=confirm, move_to_group_id=move_to_group_id)
 
 
 @mcp.tool()
@@ -461,9 +518,13 @@ async def create_category(
     """Create a category inside a category group (group_id from
     get_categories). icon is a single emoji. Returns the new category."""
     return await client_writes_categories.create_category(
-        name, group_id, icon, type, exclude_from_budget, budget_variability,
-        rollover_enabled, rollover_start_month, rollover_starting_balance,
-        rollover_frequency)
+        name=name, group_id=group_id, icon=icon, type=type,
+        exclude_from_budget=exclude_from_budget,
+        budget_variability=budget_variability,
+        rollover_enabled=rollover_enabled,
+        rollover_start_month=rollover_start_month,
+        rollover_starting_balance=rollover_starting_balance,
+        rollover_frequency=rollover_frequency)
 
 
 @mcp.tool()
@@ -483,24 +544,32 @@ async def update_category(
     """Update a category: rename, change icon, move to another group
     (group_id), budget flags. Only the fields you pass are changed."""
     return await client_writes_categories.update_category(
-        category_id, name, icon, group_id, type, exclude_from_budget,
-        budget_variability, rollover_enabled, rollover_start_month,
-        rollover_starting_balance, rollover_frequency)
+        category_id=category_id, name=name, icon=icon, group_id=group_id,
+        type=type, exclude_from_budget=exclude_from_budget,
+        budget_variability=budget_variability, rollover_enabled=rollover_enabled,
+        rollover_start_month=rollover_start_month,
+        rollover_starting_balance=rollover_starting_balance,
+        rollover_frequency=rollover_frequency)
 
 
 @mcp.tool()
 async def delete_category(
     category_id: str,
+    confirm: str,
     move_to_category_id: Optional[str] = None,
     uncategorize_transactions: bool = False,
 ) -> dict[str, Any]:
-    """Delete a category. You must say what happens to its transactions: pass
+    """Delete a category. IRREVERSIBLE. confirm is REQUIRED and must exactly
+    equal the category's current name (case-sensitive; checked against a fresh
+    get_categories read; unknown ids are refused). You must also say what
+    happens to its transactions: pass
     move_to_category_id to reassign them, or uncategorize_transactions=True to
     knowingly leave them Uncategorized (budget history for the category is
     lost either way). With neither (or both) the call is refused before
     anything is sent. Returns {deleted, errors}."""
     return await client_writes_categories.delete_category(
-        category_id, move_to_category_id=move_to_category_id,
+        category_id=category_id, confirm=confirm,
+        move_to_category_id=move_to_category_id,
         uncategorize_transactions=uncategorize_transactions)
 
 
@@ -509,7 +578,8 @@ async def update_tag(tag_id: str, name: str, color: str) -> dict[str, Any]:
     """Rename and/or recolor a transaction tag (tag_id from get_tags; color is
     a hex string like '#E5484D'). Pass the existing value for whichever of
     name/color you are not changing."""
-    return await client_writes_categories.update_tag(tag_id, name, color)
+    return await client_writes_categories.update_tag(
+        tag_id=tag_id, name=name, color=color)
 
 
 @mcp.tool()
@@ -534,9 +604,13 @@ async def update_merchant(
     recurring_frequency (e.g. 'monthly') and recurring_base_date (ISO date);
     recurring_amount is negative for expenses. Renaming onto another EXISTING
     merchant's name is rejected by Monarch (this cannot merge merchants); to
-    merge, rename the transactions with update_transaction."""
+    merge, rename the transactions with update_transaction.
+    default_category_application_mode: leave unset in normal use. Only
+    "new_and_edits" (or the merchant's current mode) is accepted; other modes
+    are unverified and one may retroactively re-categorize every existing
+    transaction of the merchant, so they are refused."""
     return await client_writes_categories.update_merchant(
-        merchant_id, name=name, default_category_id=default_category_id,
+        merchant_id=merchant_id, name=name, default_category_id=default_category_id,
         clear_default_category=clear_default_category,
         default_category_application_mode=default_category_application_mode,
         is_recurring=is_recurring, recurring_amount=recurring_amount,
@@ -562,11 +636,16 @@ async def update_account(
     """Edit a MANUAL (non-bank-linked) account. Only the fields you pass change;
     everything else is preserved. notes="" clears notes. account_type and
     account_subtype must be passed together (a pair from get_account_type_options).
-    Bank-linked accounts are refused. Requires writes enabled."""
+    Bank-linked accounts are refused, and so are LIABILITY accounts (loans,
+    credit cards, mortgages...): every update resends `recurrence: {}`, which
+    might clear an existing payment recurrence there (unverified), so edit
+    those in the Monarch web app. Requires writes enabled."""
     return await client_writes_accounts.update_account(
-        account_id, name, display_balance, notes, account_type, account_subtype,
-        hide_from_list, hide_in_budget, hide_transactions_from_reports,
-        include_in_net_worth, interest_rate)
+        account_id=account_id, name=name, display_balance=display_balance,
+        notes=notes, account_type=account_type, account_subtype=account_subtype,
+        hide_from_list=hide_from_list, hide_in_budget=hide_in_budget,
+        hide_transactions_from_reports=hide_transactions_from_reports,
+        include_in_net_worth=include_in_net_worth, interest_rate=interest_rate)
 
 
 @mcp.tool()
@@ -575,24 +654,39 @@ async def delete_account(account_id: str, confirm_name: str) -> dict:
     and balance history. confirm_name must exactly equal the account's current
     name (case-sensitive) or nothing happens. Bank-linked accounts are refused.
     Only call when the user has explicitly asked to delete that specific account."""
-    return await client_writes_accounts.delete_account(account_id, confirm_name)
+    return await client_writes_accounts.delete_account(
+        account_id=account_id, confirm_name=confirm_name)
 
 
 @mcp.tool()
 async def set_budget_amount(category_id: str, amount: float, month: str,
-                            apply_to_future: bool = False) -> dict:
+                            apply_to_future: bool = False,
+                            confirm: Optional[str] = None) -> dict:
     """Set one category's budgeted amount for one month (month = 'YYYY-MM-01').
     apply_to_future defaults to False (this month only); True also overwrites the
-    budget for ALL later months, so only set it when the user asked for that."""
-    return await client_writes_accounts.set_budget_amount(category_id, amount, month, apply_to_future)
+    budget for ALL later months, so only set it when the user asked for that --
+    and then confirm is REQUIRED and must exactly equal the category's current
+    name (checked against a fresh get_categories read). confirm is ignored when
+    apply_to_future is False."""
+    return await client_writes_accounts.set_budget_amount(
+        category_id=category_id, amount=amount, month=month,
+        apply_to_future=apply_to_future, confirm=confirm)
 
 
 @mcp.tool()
 async def set_flex_budget_amount(amount: float, month: str,
-                                 apply_to_future: bool = False) -> dict:
+                                 apply_to_future: bool = False,
+                                 confirm: Optional[str] = None) -> dict:
     """Set the flexible-spending budget total for one month (month = 'YYYY-MM-01').
-    apply_to_future defaults to False; True overwrites all later months too."""
-    return await client_writes_accounts.set_flex_budget_amount(amount, month, apply_to_future)
+    apply_to_future defaults to False; True overwrites all later months too, and
+    then confirm is REQUIRED and must equal the flex amount currently planned for
+    that month, with two decimals (e.g. '250.00'), which the tool
+    reads fresh from get_budgets (budgetData.monthlyAmountsForFlexExpense;
+    mapping confirmed against a live read on 2026-10-01, field present and
+    numeric) -- look at it before overwriting. If that read has no numeric
+    amount for the month the call is refused rather than treated as 0.00. confirm is ignored when apply_to_future is False."""
+    return await client_writes_accounts.set_flex_budget_amount(
+        amount=amount, month=month, apply_to_future=apply_to_future, confirm=confirm)
 
 
 @mcp.tool()
@@ -600,8 +694,13 @@ async def create_savings_goal(name: str, target_amount: Optional[float] = None,
                               target_date: Optional[str] = None,
                               is_sinking_fund: bool = False) -> dict:
     """Create one savings goal (target_date 'YYYY-MM-DD'). Creates the goal, then
-    applies target amount/date/sinking-fund via a follow-up update."""
-    return await client_writes_accounts.create_savings_goal(name, target_amount, target_date, is_sinking_fund)
+    applies target amount/date/sinking-fund via a follow-up update. If that
+    follow-up fails the goal still EXISTS: the result carries its id plus a
+    `followUpError` -- retry with update_savings_goal on that id, do NOT call
+    create_savings_goal again."""
+    return await client_writes_accounts.create_savings_goal(
+        name=name, target_amount=target_amount, target_date=target_date,
+        is_sinking_fund=is_sinking_fund)
 
 
 @mcp.tool()
@@ -609,24 +708,37 @@ async def update_savings_goal(goal_id: str, name: Optional[str] = None,
                               target_amount: Optional[float] = None,
                               target_date: Optional[str] = None,
                               is_sinking_fund: Optional[bool] = None) -> dict:
-    """Update a savings goal. Only the fields passed change."""
-    return await client_writes_accounts.update_savings_goal(goal_id, name, target_amount, target_date, is_sinking_fund)
+    """Update a savings goal. Only the fields passed change; name must not be empty."""
+    return await client_writes_accounts.update_savings_goal(
+        goal_id=goal_id, name=name, target_amount=target_amount,
+        target_date=target_date, is_sinking_fund=is_sinking_fund)
 
 
 @mcp.tool()
 async def set_savings_goal_budget_amount(goal_id: str, amount: float, month: str,
                                          apply_to_future: bool = False,
-                                         account_id: Optional[str] = None) -> dict:
+                                         account_id: Optional[str] = None,
+                                         confirm: Optional[str] = None) -> dict:
     """Set the budgeted monthly contribution to a savings goal (month = 'YYYY-MM-01').
-    apply_to_future defaults to False; True overwrites all later months too."""
-    return await client_writes_accounts.set_savings_goal_budget_amount(goal_id, amount, month, apply_to_future, account_id)
+    apply_to_future defaults to False; True overwrites all later months too, and
+    then confirm is REQUIRED and must exactly equal the goal's current name
+    (fresh get_budgets read in its default window, previous month through next
+    month's start; a goal not visible there is refused). confirm is ignored when
+    apply_to_future is False."""
+    return await client_writes_accounts.set_savings_goal_budget_amount(
+        goal_id=goal_id, amount=amount, month=month, apply_to_future=apply_to_future,
+        account_id=account_id, confirm=confirm)
 
 
 @mcp.tool()
-async def delete_savings_goal(goal_id: str) -> dict:
+async def delete_savings_goal(goal_id: str, confirm: str) -> dict:
     """IRREVERSIBLE: permanently deletes a savings goal and its contribution
-    history. Only call when the user explicitly asked to delete that goal."""
-    return await client_writes_accounts.delete_savings_goal(goal_id)
+    history. confirm is REQUIRED and must exactly equal the goal's current name
+    (looked up in get_budgets' default window, previous month through next
+    month's start; a goal not visible there is refused)
+    (checked against a fresh get_budgets read; unknown ids are refused). Only call
+    when the user explicitly asked to delete that goal."""
+    return await client_writes_accounts.delete_savings_goal(goal_id=goal_id, confirm=confirm)
 
 @mcp.tool()
 async def split_transaction(transaction_id: str, splits: list[dict]) -> dict[str, Any]:
@@ -637,13 +749,15 @@ async def split_transaction(transaction_id: str, splits: list[dict]) -> dict[str
     Omitted category_id / merchant_name default to the original transaction's.
     Splitting an already-split transaction replaces the old split. Check
     `errors` in the result; use unsplit_transaction to undo."""
-    return await client_writes_splits_rules.split_transaction(transaction_id, splits)
+    return await client_writes_splits_rules.split_transaction(
+        transaction_id=transaction_id, splits=splits)
 
 
 @mcp.tool()
 async def unsplit_transaction(transaction_id: str) -> dict[str, Any]:
     """Remove a transaction's split, restoring a single transaction (WRITE)."""
-    return await client_writes_splits_rules.unsplit_transaction(transaction_id)
+    return await client_writes_splits_rules.unsplit_transaction(
+        transaction_id=transaction_id)
 
 
 @mcp.tool()
@@ -664,6 +778,7 @@ async def update_transaction_rule(
     link_savings_goal_id: str | None = None,
     split_action: dict | None = None,
     apply_to_existing_transactions: bool = False,
+    confirm: str | None = None,
 ) -> dict[str, Any]:
     """Update an existing transaction rule (WRITE). Same criteria/actions as
     create_transaction_rule plus add_tag_ids, set_hide_from_reports,
@@ -674,11 +789,16 @@ async def update_transaction_rule(
     criterion and one action. split_action = {"splits": [{"percent": 60,
     "category_id": ..., "merchant_name": ..., "hide_from_reports": ...}, ...]}
     with percents summing to exactly 100 (percentage splits only). set_merchant_name
-    must exactly match an existing merchant. The response has no rule in it:
+    must exactly match an existing merchant. apply_to_existing_transactions=True
+    re-runs the rule over every matching HISTORICAL transaction and REQUIRES
+    confirm=str(N), N = the number of existing transactions the merged rule
+    matches (the tool previews the merged criteria itself and refuses unless
+    confirm equals totalCount) -- run preview_transaction_rule first, check the
+    count with the user, then echo it; ignored when False. The response has no rule in it:
     confirm with get_transaction_rules. `errors` non-null (even an empty
     object, flagged with a `hint`) means the update was rejected."""
     return await client_writes_splits_rules.update_transaction_rule(
-        rule_id, merchant_name_criteria=merchant_name_criteria,
+        rule_id=rule_id, merchant_name_criteria=merchant_name_criteria,
         original_statement_criteria=original_statement_criteria,
         amount_criteria=amount_criteria, category_ids=category_ids, account_ids=account_ids,
         set_category_action=set_category_action, set_merchant_name=set_merchant_name,
@@ -686,7 +806,8 @@ async def update_transaction_rule(
         review_status=review_status, needs_review_by_user_id=needs_review_by_user_id,
         link_goal_id=link_goal_id, link_savings_goal_id=link_savings_goal_id,
         split_action=split_action,
-        apply_to_existing_transactions=apply_to_existing_transactions)
+        apply_to_existing_transactions=apply_to_existing_transactions,
+        confirm=confirm)
 
 
 if __name__ == "__main__":

@@ -194,9 +194,10 @@ async def test_call_layer_blocks_any_mutation_op_when_closed(monkeypatch, fake_c
     every vendored mutation-kind op while the gate is closed."""
     monkeypatch.delenv(writes.WRITES_ENV, raising=False)
     mutations = [n for n in operations.PROVENANCE if operations.is_mutation(n)]
-    # 11 write tools, 10 distinct mutation ops: recategorize_transaction and
-    # update_transaction share Web_TransactionDrawerUpdateTransaction.
-    assert len(mutations) >= 10, mutations
+    # 30 write tools, 28 distinct mutation ops: recategorize_transaction and
+    # update_transaction share Web_TransactionDrawerUpdateTransaction, and
+    # split_transaction / unsplit_transaction share Common_SplitTransactionMutation.
+    assert len(mutations) == 28, mutations
     for op in mutations:
         with pytest.raises(errors.MonarchWriteBlocked):
             await writes._call(op, {})

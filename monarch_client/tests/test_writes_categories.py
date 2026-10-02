@@ -9,7 +9,7 @@ from importlib import resources
 
 import pytest
 
-from monarch_client import errors, operations, writes, writes_categories as wc
+from monarch_client import errors, operations, reads, writes, writes_categories as wc
 
 
 class _FakeClient:
@@ -27,6 +27,7 @@ def fake_client(monkeypatch):
     client = _FakeClient()
     monkeypatch.setenv(writes.WRITES_ENV, "1")
     monkeypatch.setattr(writes, "_client", client)
+    monkeypatch.setattr(reads, "_client", client)
     return client
 
 
@@ -35,10 +36,10 @@ def fake_client(monkeypatch):
 _ARGS = {
     "create_category_group": ("G",),
     "update_category_group": ("g1",),
-    "delete_category_group": ("g1",),
+    "delete_category_group": ("g1", "G"),
     "create_category": ("C", "g1"),
     "update_category": ("c1",),
-    "delete_category": ("c1",),
+    "delete_category": ("c1", "C"),
     "update_tag": ("t1", "n", "#000000"),
     "update_merchant": ("m1", "N"),
 }
@@ -106,12 +107,15 @@ async def test_delete_category_group_and_error_passthrough(fake_client):
                        "fieldErrors": None},
         }
     }
-    r = await wc.delete_category_group("g1")
-    assert fake_client.calls == [("Common_DeleteCategoryGroup", {"id": "g1"})]
+    fake_client.responses["Common_GetCategories"] = {
+        "categoryGroups": [{"id": "g1", "name": "Group One"}], "categories": [],
+    }
+    r = await wc.delete_category_group("g1", "Group One")
+    assert fake_client.calls[-1] == ("Common_DeleteCategoryGroup", {"id": "g1"})
     assert r["deleted"] is None
     assert r["errors"]["message"] == "Category group is not empty"
-    await wc.delete_category_group("g1", move_to_group_id="g2")
-    assert fake_client.calls[1][1] == {"id": "g1", "moveToGroupId": "g2"}
+    await wc.delete_category_group("g1", "Group One", move_to_group_id="g2")
+    assert fake_client.calls[-1][1] == {"id": "g1", "moveToGroupId": "g2"}
 
 
 # ---- categories -----------------------------------------------------------
@@ -145,15 +149,20 @@ async def test_update_category_partial_and_move(fake_client):
     ]
 
 
+def _seed_cats(fake_client):
+    fake_client.responses["Common_GetCategories"] = {
+        "categoryGroups": [], "categories": [{"id": "c1", "name": "C"}]}
+
+
 @pytest.mark.asyncio
 async def test_delete_category(fake_client):
     fake_client.responses["Web_DeleteCategory"] = {
         "deleteCategory": {"deleted": True, "errors": None}
     }
-    r = await wc.delete_category("c1", move_to_category_id="c2")
-    assert fake_client.calls == [
-        ("Web_DeleteCategory", {"id": "c1", "moveToCategoryId": "c2"})
-    ]
+    _seed_cats(fake_client)
+    r = await wc.delete_category("c1", "C", move_to_category_id="c2")
+    assert fake_client.calls[-1] == (
+        "Web_DeleteCategory", {"id": "c1", "moveToCategoryId": "c2"})
     assert r == {"deleted": True, "errors": None}
 
 
@@ -304,15 +313,17 @@ async def test_update_merchant_unknown_id(fake_client):
 
 @pytest.mark.asyncio
 async def test_delete_category_requires_target_or_explicit_uncategorize(fake_client):
+    _seed_cats(fake_client)
     with pytest.raises(ValueError, match="uncategorize_transactions"):
-        await wc.delete_category("c1")
+        await wc.delete_category("c1", "C")
     with pytest.raises(ValueError, match="not both"):
-        await wc.delete_category("c1", "c2", uncategorize_transactions=True)
-    assert fake_client.calls == []
+        await wc.delete_category("c1", "C", "c2", uncategorize_transactions=True)
+    assert [n for n, _ in fake_client.calls] == ["Common_GetCategories"] * 2
+    fake_client.calls.clear()
     fake_client.responses["Web_DeleteCategory"] = {
         "deleteCategory": {"deleted": True, "errors": None}}
-    await wc.delete_category("c1", uncategorize_transactions=True)
-    assert fake_client.calls == [("Web_DeleteCategory", {"id": "c1"})]
+    await wc.delete_category("c1", "C", uncategorize_transactions=True)
+    assert fake_client.calls[-1] == ("Web_DeleteCategory", {"id": "c1"})
 
 
 @pytest.mark.asyncio
@@ -380,3 +391,20 @@ async def test_update_merchant_sends_stripped_name(fake_client):
     await wc.update_merchant("m1", name="  Fresh Name  ")
     assert _sent(fake_client)["name"] == "Fresh Name"
     assert any(n == "Common_SearchMerchantsByName" for n, _ in fake_client.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["apply_to_all", "existing_and_new", "", "NEW_AND_EDITS"])
+async def test_update_merchant_refuses_unverified_application_mode(fake_client, mode):
+    _setup(fake_client)
+    with pytest.raises(ValueError, match="not a verified value"):
+        await wc.update_merchant("m1", default_category_application_mode=mode)
+    assert [n for n, _ in fake_client.calls] == ["Common_GetMerchantForEdit"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["new_and_edits", "new_only"])  # known value / merchant's current
+async def test_update_merchant_accepts_known_or_current_application_mode(fake_client, mode):
+    _setup(fake_client)
+    await wc.update_merchant("m1", default_category_application_mode=mode)
+    assert _sent(fake_client)["defaultCategoryApplicationMode"] == mode
