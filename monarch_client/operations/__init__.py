@@ -87,10 +87,10 @@ PROVENANCE: dict[str, dict] = {
         ),
     },
     "Web_GetAccountsPage": {
-        "catalog_query_hash": "dceb5b0ae3a7fb07440b28c414ecf90dabe5649223b1c8e51ea9b04410dbb61a",
-        "vendored_sha256": "c31bb6941e36410dd523994e8f7f31f46d567621a2bd3647d3e19e52e9f17b35",
+        "catalog_query_hash": "35c952e57ee3c061da5cfec3d29276b47a730c5774681fd56ea1c85d15f76580",
+        "vendored_sha256": "0b11df43018e400c768898b9af7b4c902881f44ad96fa7275c5b112aeac7558f",
         "exported_at": _READ_OPS_EXPORTED_AT,
-        "runs_seen": ["2026-09-23T15-40-10Z", "2026-09-23T16-27-05Z", "2026-09-24T14-30-04Z"],
+        "runs_seen": ["2026-10-04T14-30-00Z", "2026-10-05T14-30-00Z", "2026-10-06T14-30-00Z"],
         "hand_repaired": False,
         "note": "backs list_accounts; called with variables {'filters': {}}",
     },
@@ -134,10 +134,10 @@ PROVENANCE: dict[str, dict] = {
         "note": "backs get_cashflow_summary",
     },
     "Web_GetTransactionsList": {
-        "catalog_query_hash": "1a6be82e01555ce9a1f484ae7000f04f98b75656262e4e927516a5d6b1e26232",
-        "vendored_sha256": "26f13921c626930567737b13e787e65a344c4660cc22ac70226dc5cba9d911c7",
+        "catalog_query_hash": "407cfb267b42c06e4a433dd99198d4decd4818a228b7a29677fb724e3a100c66",
+        "vendored_sha256": "a27eb40e9442f3dabcae41e6f7fd5f04968dbb36a43a520b3d9c445dfe6431c7",
         "exported_at": _READ_OPS_EXPORTED_AT,
-        "runs_seen": ["2026-09-23T15-40-10Z", "2026-09-23T16-27-05Z", "2026-09-24T14-30-04Z"],
+        "runs_seen": ["2026-10-04T14-30-00Z", "2026-10-05T14-30-00Z", "2026-10-06T14-30-00Z"],
         "hand_repaired": False,
         "note": (
             "backs get_transactions. filters.categories/.accounts/.tags key "
@@ -147,10 +147,10 @@ PROVENANCE: dict[str, dict] = {
         ),
     },
     "Web_GetTransactionDrawer": {
-        "catalog_query_hash": "5bf4ab6d55be1c57510c3847bfc5f57700f4ecfeb4fe80e70c3087dd09d5ba76",
-        "vendored_sha256": "b8a469416b7a7a27dd7c7663d8c3a921265a3e3eee9b97d8815d30d544b11610",
+        "catalog_query_hash": "b56a813a44c158250991b0e8cdc310bcda158c557ea8c048fba8c7aad426b0ea",
+        "vendored_sha256": "73ce82368c7fadc9fe6742633dfdf699b1bb6629b0541abe0233b61557bb03a0",
         "exported_at": _READ_OPS_EXPORTED_AT,
-        "runs_seen": ["2026-09-23T15-40-10Z", "2026-09-23T16-27-05Z", "2026-09-24T14-30-04Z"],
+        "runs_seen": ["2026-10-04T14-30-00Z", "2026-10-05T14-30-00Z", "2026-10-06T14-30-00Z"],
         "hand_repaired": False,
         "note": "backs get_transaction_details",
     },

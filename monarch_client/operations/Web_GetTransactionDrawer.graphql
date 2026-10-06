@@ -1,8 +1,8 @@
 # source: recon catalog for 'monarch', operation 'Web_GetTransactionDrawer'
-# query_hash: 5bf4ab6d55be1c57510c3847bfc5f57700f4ecfeb4fe80e70c3087dd09d5ba76
-# observed in run(s): 2026-09-23T15-40-10Z, 2026-09-23T16-27-05Z, 2026-09-24T14-30-04Z
-# last_seen: 2026-09-24T14:30:22.384000+00:00
-# exported: 2026-09-24T15:56:34.688587+00:00
+# query_hash: b56a813a44c158250991b0e8cdc310bcda158c557ea8c048fba8c7aad426b0ea
+# observed in run(s): 2026-10-04T14-30-00Z, 2026-10-05T14-30-00Z, 2026-10-06T14-30-00Z
+# last_seen: 2026-10-06T14:30:22.361000+00:00
+# exported: 2026-10-06T17:12:49.377856+00:00
 # NOT authoritative -- catalog is built from OBSERVED traffic, not a schema fetch.
 
 query Web_GetTransactionDrawer($id: UUID!, $redirectPosted: Boolean, $debugActivityLogEnabled: Boolean! = false) {
@@ -71,6 +71,12 @@ fragment TransactionOverviewFields on Transaction {
   plaidName
   notes
   isRecurring
+  recurrenceGroup {
+    id
+    name
+    frequency
+    __typename
+  }
   reviewStatus
   needsReview
   isSplitTransaction
@@ -174,6 +180,12 @@ fragment TransactionDrawerFields on Transaction {
   activityLog @skip(if: $debugActivityLogEnabled)
   debugActivityLog @include(if: $debugActivityLogEnabled)
   isRecurring
+  recurrenceGroup {
+    id
+    name
+    frequency
+    __typename
+  }
   date
   originalDate
   hideFromReports

@@ -1,8 +1,8 @@
 # source: recon catalog for 'monarch', operation 'Web_GetTransactionsList'
-# query_hash: 1a6be82e01555ce9a1f484ae7000f04f98b75656262e4e927516a5d6b1e26232
-# observed in run(s): 2026-09-23T15-40-10Z, 2026-09-23T16-27-05Z, 2026-09-24T14-30-04Z
-# last_seen: 2026-09-24T14:30:46.822000+00:00
-# exported: 2026-09-24T15:56:34.688381+00:00
+# query_hash: 407cfb267b42c06e4a433dd99198d4decd4818a228b7a29677fb724e3a100c66
+# observed in run(s): 2026-10-04T14-30-00Z, 2026-10-05T14-30-00Z, 2026-10-06T14-30-00Z
+# last_seen: 2026-10-06T14:30:50.837000+00:00
+# exported: 2026-10-06T17:12:49.574157+00:00
 # NOT authoritative -- catalog is built from OBSERVED traffic, not a schema fetch.
 
 query Web_GetTransactionsList($offset: Int, $limit: Int, $filters: TransactionFilterInput, $orderBy: TransactionOrdering) {
@@ -32,6 +32,12 @@ fragment TransactionOverviewFields on Transaction {
   plaidName
   notes
   isRecurring
+  recurrenceGroup {
+    id
+    name
+    frequency
+    __typename
+  }
   reviewStatus
   needsReview
   isSplitTransaction
