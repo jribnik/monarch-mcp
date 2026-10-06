@@ -1,8 +1,8 @@
 # source: recon catalog for 'monarch', operation 'Web_GetAccountsPage'
-# query_hash: dceb5b0ae3a7fb07440b28c414ecf90dabe5649223b1c8e51ea9b04410dbb61a
-# observed in run(s): 2026-09-23T15-40-10Z, 2026-09-23T16-27-05Z, 2026-09-24T14-30-04Z
-# last_seen: 2026-09-24T14:30:14.437000+00:00
-# exported: 2026-09-24T15:56:34.687001+00:00
+# query_hash: 35c952e57ee3c061da5cfec3d29276b47a730c5774681fd56ea1c85d15f76580
+# observed in run(s): 2026-10-04T14-30-00Z, 2026-10-05T14-30-00Z, 2026-10-06T14-30-00Z
+# last_seen: 2026-10-06T14:30:11.938000+00:00
+# exported: 2026-10-06T17:12:49.159452+00:00
 # NOT authoritative -- catalog is built from OBSERVED traffic, not a schema fetch.
 
 query Web_GetAccountsPage($filters: AccountFilters) {
@@ -76,6 +76,7 @@ fragment InstitutionStatusTooltipFields on Institution {
 fragment AccountListItemFields on Account {
   id
   displayName
+  notes
   displayBalance
   signedBalance
   updatedAt
