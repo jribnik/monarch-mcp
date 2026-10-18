@@ -134,10 +134,10 @@ PROVENANCE: dict[str, dict] = {
         "note": "backs get_cashflow_summary",
     },
     "Web_GetTransactionsList": {
-        "catalog_query_hash": "407cfb267b42c06e4a433dd99198d4decd4818a228b7a29677fb724e3a100c66",
-        "vendored_sha256": "a27eb40e9442f3dabcae41e6f7fd5f04968dbb36a43a520b3d9c445dfe6431c7",
+        "catalog_query_hash": "2d29c3f3e5525a393ffaf01245ef8407fabd5ed7492dd7574e488e44fcc775f6",
+        "vendored_sha256": "11054e458bf127c8a8610f4f2d471268cfb632c6398dd579c82837d54d60bd89",
         "exported_at": _READ_OPS_EXPORTED_AT,
-        "runs_seen": ["2026-10-04T14-30-00Z", "2026-10-05T14-30-00Z", "2026-10-06T14-30-00Z"],
+        "runs_seen": ["2026-10-16T14-30-00Z", "2026-10-17T14-30-00Z", "2026-10-18T14-30-03Z"],
         "hand_repaired": False,
         "note": (
             "backs get_transactions. filters.categories/.accounts/.tags key "
@@ -147,18 +147,18 @@ PROVENANCE: dict[str, dict] = {
         ),
     },
     "Web_GetTransactionDrawer": {
-        "catalog_query_hash": "b56a813a44c158250991b0e8cdc310bcda158c557ea8c048fba8c7aad426b0ea",
-        "vendored_sha256": "73ce82368c7fadc9fe6742633dfdf699b1bb6629b0541abe0233b61557bb03a0",
+        "catalog_query_hash": "e31f60e59cff720bbede0d6a725a6836bde3897dcce46f175b871f2f76e444b7",
+        "vendored_sha256": "a04e5c7fd92183925ff33582a77492df92512871abc33e6b1b0e21f93209f2f8",
         "exported_at": _READ_OPS_EXPORTED_AT,
-        "runs_seen": ["2026-10-04T14-30-00Z", "2026-10-05T14-30-00Z", "2026-10-06T14-30-00Z"],
+        "runs_seen": ["2026-10-16T14-30-00Z", "2026-10-17T14-30-00Z", "2026-10-18T14-30-03Z"],
         "hand_repaired": False,
         "note": "backs get_transaction_details",
     },
     "Common_GetAggregatedRecurringItems": {
-        "catalog_query_hash": "8ca5f3dc9d36264382287c5e2c294357292f7d3c1701de873b1516e947d981a6",
+        "catalog_query_hash": "ffac36c49702559901f3b65826cbc815b8d25436900820105824cf194178e797",
         "vendored_sha256": "53b69ab22e477d2e4b3ed65314ea480994687da88aafabe9b204022da7fbfab3",
         "exported_at": _READ_OPS_EXPORTED_AT,
-        "runs_seen": ["2026-09-23T15-40-10Z", "2026-09-23T16-27-05Z", "2026-09-24T14-30-04Z"],
+        "runs_seen": ["2026-10-16T14-30-00Z", "2026-10-17T14-30-00Z", "2026-10-18T14-30-03Z"],
         "hand_repaired": True,
         "note": (
             "backs get_recurring_transactions. `groupBy` was redacted to "
@@ -166,7 +166,12 @@ PROVENANCE: dict[str, dict] = {
             "repaired to the real value \"status\", recovered from the raw "
             "HAR body in artifacts/monarch/runs/2026-09-24T14-30-04Z/"
             "capture.har. vendored_sha256 will never match catalog_query_hash "
-            "for this reason -- that's expected, not a bug."
+            "for this reason -- that's expected, not a bug. 2026-10-18: the web "
+            "app's observed query dropped the optional $includeFinancialInsights "
+            "variable and the `financialInsights` selection; the vendored text "
+            "was deliberately NOT replaced (the superset still validates and "
+            "works live, defaulting the variable to false), only the recorded "
+            "catalog hash/runs were advanced to acknowledge the drift."
         ),
     },
     "Common_CreateTransactionTag": {
