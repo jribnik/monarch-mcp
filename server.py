@@ -59,9 +59,10 @@ Workflow:
   Write tools take IDs, not names, except where a parameter says otherwise.
 - Amounts are signed: negative = expense/debit, positive = income/credit.
 - Lists are paged: use offset/limit (get_transactions defaults to 50, compact rows)
-  and keep paging while next_offset is non-null. Hidden transactions and
-  hidden accounts are excluded unless you ask (visibility="all" /
-  include_hidden=True); detail="full" gives the raw, much larger shape.
+  and keep paging while next_offset is non-null. Hidden transactions are always
+  excluded (visibility="all"/"hidden" is not yet supported); hidden accounts are
+  omitted unless include_hidden=True. detail="full" gives the raw, much larger
+  shape (limit <= 25).
 - Preview before committing: call preview_transaction_rule (a dry run) to see
   what a rule would match before create_transaction_rule or
   update_transaction_rule, especially with apply_to_existing_transactions=True.
@@ -98,9 +99,11 @@ async def list_accounts(
 ) -> dict[str, Any]:
     """
     List accounts. Default (detail="compact"): one slim row per account (id,
-    name, type, subtype, balance, institution, is_manual, include_in_net_worth,
+    name, type, subtype, balance, institution, has_credential, include_in_net_worth,
     is_hidden, updated_at) plus totals {assets, liabilities, net_worth} over the
-    accounts flagged include_in_net_worth. Hidden accounts are omitted unless
+    returned accounts flagged include_in_net_worth (a credit-balance card reduces
+    liabilities). has_credential is a heuristic: True = linked to an institution
+    (syncs), False = probably a manual account. Hidden accounts are omitted unless
     include_hidden=True. account_types filters by type name (e.g. "depository")
     and narrows the totals too. detail="full" returns the raw account list
     (every account, other parameters ignored).
@@ -161,21 +164,27 @@ async def get_transactions(
 
     - search: free-text match on merchant/notes; "" for all.
     - category_ids / account_ids / tag_ids / merchant_ids: filter to those ids.
-    - credits_only: True = only credits (income), False = only debits.
-    - visibility: "visible" (default) excludes hidden transactions (e.g. the
-      auto-hidden Interest/Dividends ones); "all" includes them. A hidden-only
-      mode is not supported.
+    - merchant_ids: filter to those merchant ids (UNVERIFIED against a live
+      call; fall back to search if it returns nothing unexpectedly).
+    - credits_only: True = only credits (income). Leave unset otherwise (False
+      does NOT mean debits only; it sends nothing).
+    - visibility: only "visible" (default; excludes hidden transactions such as
+      the auto-hidden Interest/Dividends ones). "all" and "hidden" raise "not yet
+      supported" -- they need a captured app request (api-recon).
     - order_by: only "date" (newest first).
     - total_count_only: return just {total_count} for the filters.
 
     Default detail="compact" returns {transactions, total_count, returned,
     offset, next_offset, truncated}; each row has id, date, amount, pending,
-    merchant, merchant_id, category, category_id, account, account_id,
-    review_status, needs_review, hide_from_reports, is_split, tag_ids,
-    has_notes. Page while next_offset is non-null (limit max 200; a page is also
-    trimmed to a ~40K-character budget, setting truncated). Use
-    get_transaction_details for one transaction's full record. detail="full"
-    returns the raw rows (limit max 25).
+    merchant, merchant_id, original_statement (raw plaidName, <=60 chars; often
+    the best clue to the real merchant/sender), notes (<=80 chars), category,
+    category_id, account, account_id, review_status, needs_review,
+    hide_from_reports, is_split, tag_ids. Page while next_offset is non-null
+    (limit max 200, else error; a page is also trimmed to a ~40K-character
+    budget, setting truncated). Use get_transaction_details for one
+    transaction's full record. detail="full" returns the raw rows plus
+    truncated/next_offset fields; limit > 25 in full mode is an error (use
+    compact or limit<=25).
 
     To find items needing cleanup, fetch a date range and look at
     needs_review / review_status / category.

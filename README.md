@@ -121,12 +121,12 @@ Then restart Claude Code so it connects. Ask things like:
 
 | Tool | Kind | What |
 |------|------|------|
-| `list_accounts` | read | compact account rows (id, name, type, subtype, balance, institution, is_manual, include_in_net_worth, is_hidden, updated_at) plus assets / liabilities / net-worth totals; hidden accounts omitted unless `include_hidden`; `account_types` filter; `detail="full"` = raw list |
+| `list_accounts` | read | compact account rows (id, name, type, subtype, balance, institution, has_credential (heuristic: linked to an institution; False = probably manual), include_in_net_worth, is_hidden, updated_at) plus assets / liabilities / net-worth totals over the returned rows flagged `includeInNetWorth` (a credit-balance card reduces liabilities; `includeBalanceInNetWorth` is not used); hidden accounts omitted unless `include_hidden`; `account_types` filter; `detail="full"` = raw list |
 | `get_categories` | read | categories + groups (for valid ids) |
 | `get_tags` | read | tags (for valid ids) |
 | `get_budgets` | read | budgets for a date range |
 | `get_cashflow_summary` | read | income/expense totals |
-| `get_transactions` | read | filtered transaction search; **compact rows by default** in a `{transactions, total_count, returned, offset, next_offset, truncated}` envelope (default limit 50, max 200, pages trimmed to a ~40K-char budget); hidden transactions excluded unless `visibility="all"` (hidden-only unsupported); filters incl. `merchant_ids`, `credits_only`; `total_count_only`; `detail="full"` = raw rows (limit max 25). The nightly validator needs `contrib/run.sh.compact-output.patch` |
+| `get_transactions` | read | filtered transaction search; **compact rows by default** in a `{transactions, total_count, returned, offset, next_offset, truncated}` envelope (default limit 50, max 200, pages trimmed to a ~40K-char budget); rows include `original_statement` (raw plaidName, <=60 chars) and `notes` (<=80 chars); a single row that exceeds the budget raises; hidden transactions always excluded (`visibility="all"`/`"hidden"` raise "not yet supported" until an app request is captured via api-recon); filters incl. `merchant_ids` (unverified live) and `credits_only` (sent only when True); `total_count_only`; `detail="full"` = raw rows plus `truncated`/`next_offset` (no longer byte-identical to the old shape; limit > 25 raises instead of clamping). The nightly validator needs `contrib/run.sh.compact-output.patch` |
 | `get_transaction_details` | read | one transaction incl. splits |
 | `get_transaction_rules` | read | auto-categorization rules |
 | `preview_transaction_rule` | read (write-adjacent) | dry-run a rule's match set |
