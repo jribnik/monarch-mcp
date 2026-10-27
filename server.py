@@ -805,8 +805,10 @@ async def split_transaction(
     `errors` in the result; use unsplit_transaction to undo.
 
     dry_run=True sends nothing (works even with writes disabled): it returns
-    {transaction_amount, current_splits, proposed_splits, sum_ok} so you can
-    check the amounts sum before committing."""
+    {transaction_amount, is_split, current_splits, proposed_splits, sum_ok} so you
+    can check the amounts sum before committing. proposed_splits is the exact
+    payload that would be sent (unknown keys rejected as in a real call) showing
+    the EFFECTIVE category/merchant (flagged *_inherited when taken from the parent)."""
     return await client_writes_splits_rules.split_transaction(
         transaction_id=transaction_id, splits=splits, dry_run=dry_run)
 
@@ -817,7 +819,8 @@ async def unsplit_transaction(
 ) -> dict[str, Any]:
     """Remove a transaction's split, restoring a single transaction (WRITE).
     dry_run=True only returns the current splits and sends nothing (works even
-    with writes disabled)."""
+    with writes disabled); on a transaction that is not split it returns
+    noop: true, is_split: false."""
     return await client_writes_splits_rules.unsplit_transaction(
         transaction_id=transaction_id, dry_run=dry_run)
 
