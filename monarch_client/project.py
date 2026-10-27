@@ -90,6 +90,31 @@ def transaction_details(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def split_dry_run(
+    txn: dict[str, Any],
+    proposed: list[dict[str, Any]],
+    sum_ok: bool,
+) -> dict[str, Any]:
+    """Preview shape for split_transaction/unsplit_transaction(dry_run=True):
+    the transaction's amount, its CURRENT splits (compacted from the drawer's
+    `splitTransactions`), the splits that would be sent, and whether they sum
+    exactly to the amount. `proposed` is already in tool-argument form."""
+    return {
+        "transaction_amount": txn.get("amount"),
+        "current_splits": [
+            {
+                "id": s.get("id"),
+                "amount": s.get("amount"),
+                "merchant": (s.get("merchant") or {}).get("name"),
+                "category": (s.get("category") or {}).get("name"),
+            }
+            for s in txn.get("splitTransactions") or []
+        ],
+        "proposed_splits": proposed,
+        "sum_ok": sum_ok,
+    }
+
+
 def recurring_transactions(data: dict[str, Any]) -> dict[str, Any]:
     """Flatten the app's status-grouped
     `aggregatedRecurringItems.groups[].results[]` into one flat

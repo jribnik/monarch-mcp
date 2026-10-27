@@ -773,23 +773,33 @@ async def delete_savings_goal(goal_id: str, confirm: str) -> dict:
     return await client_writes_accounts.delete_savings_goal(goal_id=goal_id, confirm=confirm)
 
 @mcp.tool()
-async def split_transaction(transaction_id: str, splits: list[dict]) -> dict[str, Any]:
+async def split_transaction(
+    transaction_id: str, splits: list[dict], dry_run: bool = False
+) -> dict[str, Any]:
     """Split a transaction into 2+ parts (WRITE). Each split is
     {amount, category_id?, merchant_name?, hide_from_reports?}. Amounts are
     signed like the transaction (an expense is NEGATIVE) and must sum EXACTLY,
     to the cent, to the transaction's current amount, otherwise nothing is sent.
     Omitted category_id / merchant_name default to the original transaction's.
     Splitting an already-split transaction replaces the old split. Check
-    `errors` in the result; use unsplit_transaction to undo."""
+    `errors` in the result; use unsplit_transaction to undo.
+
+    dry_run=True sends nothing (works even with writes disabled): it returns
+    {transaction_amount, current_splits, proposed_splits, sum_ok} so you can
+    check the amounts sum before committing."""
     return await client_writes_splits_rules.split_transaction(
-        transaction_id=transaction_id, splits=splits)
+        transaction_id=transaction_id, splits=splits, dry_run=dry_run)
 
 
 @mcp.tool()
-async def unsplit_transaction(transaction_id: str) -> dict[str, Any]:
-    """Remove a transaction's split, restoring a single transaction (WRITE)."""
+async def unsplit_transaction(
+    transaction_id: str, dry_run: bool = False
+) -> dict[str, Any]:
+    """Remove a transaction's split, restoring a single transaction (WRITE).
+    dry_run=True only returns the current splits and sends nothing (works even
+    with writes disabled)."""
     return await client_writes_splits_rules.unsplit_transaction(
-        transaction_id=transaction_id)
+        transaction_id=transaction_id, dry_run=dry_run)
 
 
 @mcp.tool()

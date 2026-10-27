@@ -145,6 +145,98 @@ async def test_unsplit_sends_empty_split_data(fake):
     ]
 
 
+def _txn_with_splits(amount, splits):
+    t = _txn(amount)
+    t["getTransaction"]["splitTransactions"] = splits
+    return t
+
+
+@pytest.fixture
+def gate_closed(monkeypatch):
+    client = _FakeClient({})
+    monkeypatch.delenv(writes.WRITES_ENV, raising=False)
+    monkeypatch.setattr(writes, "_client", client)
+    monkeypatch.setattr(reads, "_client", client)
+    return client
+
+
+@pytest.mark.asyncio
+async def test_split_dry_run_reports_without_mutation(fake):
+    fake.responses["Web_GetTransactionDrawer"] = _txn_with_splits(
+        -12.34,
+        [{"id": "s1", "amount": -12.34, "merchant": {"id": "m", "name": "Costco"},
+          "category": {"id": "c", "name": "Groceries"}}],
+    )
+    result = await w.split_transaction(
+        "t1", [{"amount": -6}, {"amount": "-6.34", "category_id": "c2"}], dry_run=True
+    )
+    assert [op for op, _ in fake.calls] == ["Web_GetTransactionDrawer"]
+    assert result == {
+        "transaction_amount": -12.34,
+        "current_splits": [
+            {"id": "s1", "amount": -12.34, "merchant": "Costco", "category": "Groceries"}
+        ],
+        "proposed_splits": [
+            {"amount": -6.0, "category_id": None, "merchant_name": None,
+             "hide_from_reports": False},
+            {"amount": -6.34, "category_id": "c2", "merchant_name": None,
+             "hide_from_reports": False},
+        ],
+        "sum_ok": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_split_dry_run_sum_not_ok_reported_not_raised(fake):
+    fake.responses["Web_GetTransactionDrawer"] = _txn(-12.34)
+    result = await w.split_transaction(
+        "t1", [{"amount": -6}, {"amount": -6}], dry_run=True
+    )
+    assert result["sum_ok"] is False
+    assert result["current_splits"] == []
+    assert all(op != "Common_SplitTransactionMutation" for op, _ in fake.calls)
+
+
+@pytest.mark.asyncio
+async def test_split_dry_run_works_with_gate_closed(gate_closed):
+    gate_closed.responses["Web_GetTransactionDrawer"] = _txn(-2)
+    result = await w.split_transaction(
+        "t1", [{"amount": -1}, {"amount": -1}], dry_run=True
+    )
+    assert result["sum_ok"] is True
+    assert [op for op, _ in gate_closed.calls] == ["Web_GetTransactionDrawer"]
+    # non-dry-run is still refused with the gate closed
+    with pytest.raises(MonarchWriteBlocked):
+        await w.split_transaction("t1", [{"amount": -1}, {"amount": -1}])
+
+
+@pytest.mark.asyncio
+async def test_split_dry_run_still_validates_input_and_transaction(fake):
+    with pytest.raises(ValueError):
+        await w.split_transaction("t1", [{"amount": -1}], dry_run=True)
+    fake.responses["Web_GetTransactionDrawer"] = {"getTransaction": None}
+    with pytest.raises(ValueError, match="wasn't found"):
+        await w.split_transaction("nope", [{"amount": -1}, {"amount": -1}], dry_run=True)
+
+
+@pytest.mark.asyncio
+async def test_unsplit_dry_run_reads_only_and_works_with_gate_closed(gate_closed):
+    gate_closed.responses["Web_GetTransactionDrawer"] = _txn_with_splits(
+        -2,
+        [{"id": "s1", "amount": -1, "merchant": None, "category": None},
+         {"id": "s2", "amount": -1, "merchant": {"name": "M"}, "category": {"name": "C"}}],
+    )
+    result = await w.unsplit_transaction("t1", dry_run=True)
+    assert [op for op, _ in gate_closed.calls] == ["Web_GetTransactionDrawer"]
+    assert result["transaction_amount"] == -2
+    assert result["proposed_splits"] == [] and result["sum_ok"] is True
+    assert [s["id"] for s in result["current_splits"]] == ["s1", "s2"]
+    assert result["current_splits"][1]["merchant"] == "M"
+    gate_closed.responses["Web_GetTransactionDrawer"] = {"getTransaction": None}
+    with pytest.raises(ValueError, match="wasn't found"):
+        await w.unsplit_transaction("nope", dry_run=True)
+
+
 def _existing_rule(**over):
     rule = {
         "id": "r1",

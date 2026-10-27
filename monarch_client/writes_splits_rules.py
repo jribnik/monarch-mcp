@@ -161,7 +161,7 @@ def _split_item(
 
 
 async def split_transaction(
-    transaction_id: str, splits: list[dict[str, Any]]
+    transaction_id: str, splits: list[dict[str, Any]], dry_run: bool = False
 ) -> dict[str, Any]:
     """Split a transaction into 2+ parts. Each split is {amount,
     category_id?, merchant_name?, hide_from_reports?}. Amounts are signed the
@@ -177,8 +177,14 @@ async def split_transaction(
     current hideFromReports (read from get_transaction_details) unless given.
     NOT carried from the parent: owner (ownerUserId) and business entity --
     these are always sent as unset/unassigned, so a split of a transaction
-    owned by a household member or business entity will not inherit that."""
-    _require_writes("split_transaction")
+    owned by a household member or business entity will not inherit that.
+
+    dry_run=True does a fresh read of the transaction and returns
+    {transaction_amount, current_splits, proposed_splits, sum_ok} WITHOUT
+    sending the mutation; it works with the write gate closed, and a bad sum
+    is reported (sum_ok false) rather than raised."""
+    if not dry_run:
+        _require_writes("split_transaction")
     if not isinstance(splits, list) or len(splits) < 2:
         raise ValueError(
             "splits must be a list of at least 2 items (use unsplit_transaction "
@@ -204,6 +210,24 @@ async def split_transaction(
             f"({total}); got {[str(a) for a in amounts]} (mixed-sign splits "
             "are refused). NOT sending."
         )
+    if dry_run:
+        return project.split_dry_run(
+            txn,
+            [
+                {
+                    "amount": float(a),
+                    "category_id": s.get("category_id"),
+                    "merchant_name": s.get("merchant_name"),
+                    "hide_from_reports": (
+                        bool(txn.get("hideFromReports") or False)
+                        if s.get("hide_from_reports") is None
+                        else bool(s["hide_from_reports"])
+                    ),
+                }
+                for s, a in zip(splits, amounts)
+            ],
+            sum(amounts) == total,
+        )
     if sum(amounts) != total:
         raise ValueError(
             f"splits sum to {sum(amounts)} but the transaction's amount is "
@@ -222,8 +246,20 @@ async def split_transaction(
     return split_transaction_result(data)
 
 
-async def unsplit_transaction(transaction_id: str) -> dict[str, Any]:
-    """Remove a transaction's split (splitData [], as the web app sends)."""
+async def unsplit_transaction(
+    transaction_id: str, dry_run: bool = False
+) -> dict[str, Any]:
+    """Remove a transaction's split (splitData [], as the web app sends).
+
+    dry_run=True reads the transaction fresh and returns its current splits
+    (proposed_splits is [], sum_ok true) without sending the mutation; works
+    with the write gate closed."""
+    if dry_run:
+        details = await reads.get_transaction_details(transaction_id)
+        txn = details.get("getTransaction")
+        if not txn:
+            raise ValueError(f"transaction_id={transaction_id!r} wasn't found")
+        return project.split_dry_run(txn, [], True)
     _require_writes("unsplit_transaction")
     data = await _call(
         "Common_SplitTransactionMutation",

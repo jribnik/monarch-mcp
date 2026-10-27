@@ -150,7 +150,7 @@ Then restart Claude Code so it connects. Ask things like:
 | `update_account` / `delete_account` | **write** (delete is destructive) | edit a manual **asset** account (liability accounts are refused, see Security); delete needs `confirm_name`; both refuse anything not positively identified as manual |
 | `set_budget_amount` / `set_flex_budget_amount` | **write** | planned amounts; `apply_to_future` defaults False, and `True` needs `confirm` (category name / the month's current flex amount, e.g. `250.00`) |
 | `create_savings_goal` / `update_savings_goal` / `set_savings_goal_budget_amount` / `delete_savings_goal` | **write** (delete is destructive) | savings goals; create returns the new goal plus `followUpError` if applying the target fails; delete needs `confirm` = the goal's name; `set_savings_goal_budget_amount(apply_to_future=True)` needs `confirm` = the goal's name |
-| `split_transaction` / `unsplit_transaction` | **write** | split must sum exactly to the parent amount |
+| `split_transaction` / `unsplit_transaction` | **write** | split must sum exactly to the parent amount; `dry_run=True` (works with writes disabled) reads the transaction and returns `{transaction_amount, current_splits, proposed_splits, sum_ok}` without sending |
 | `update_transaction_rule` | **write** | full-rule update with merge; adds tag/hide/review/percentage-split actions; `apply_to_existing_transactions=True` needs `confirm=str(count)` of a fresh preview of the merged criteria |
 
 ## Security
