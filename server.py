@@ -267,6 +267,26 @@ async def get_account_type_options() -> dict[str, Any]:
 
 
 @mcp.tool()
+async def get_merchants(
+    search: Optional[str] = None,
+    limit: int = 100,
+    include_zero_txn: bool = False,
+) -> dict[str, Any]:
+    """
+    List merchants (id, name, transaction_count). search is a substring match
+    on the merchant name; omit it to list merchants. Merchants with no
+    transactions are hidden unless include_zero_txn=True. If `truncated` is
+    true the page was full and more may exist -- narrow `search` (there is no
+    offset). Useful for finding duplicate merchants (see the merge convention in
+    the server instructions) and for the exact name to pass to update_merchant /
+    set_merchant_name.
+    """
+    return await client_reads.get_merchants(
+        search=search, limit=limit, include_zero_txn=include_zero_txn
+    )
+
+
+@mcp.tool()
 async def get_transaction_rules() -> dict[str, Any]:
     """
     List all transaction rules (auto-categorization rules), in priority order.

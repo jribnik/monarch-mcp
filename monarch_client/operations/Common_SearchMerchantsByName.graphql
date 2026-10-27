@@ -1,6 +1,7 @@
 # source: HAND-WRITTEN read-only query (not a capture, not catalog-exported):
 #   merchant list/search, used by update_merchant's duplicate-name pre-check to
-#   give a clear error when another merchant already has the target name.
+#   give a clear error when another merchant already has the target name, and
+#   by the get_merchants read tool.
 # NOT authoritative. See operations/README.md.
 
 query Common_SearchMerchantsByName($search: String, $limit: Int, $offset: Int) {

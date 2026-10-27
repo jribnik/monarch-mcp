@@ -56,6 +56,32 @@ def tags(data: dict[str, Any]) -> dict[str, Any]:
     return {"householdTransactionTags": data.get("householdTransactionTags") or []}
 
 
+def merchants(
+    data: dict[str, Any], limit: int, include_zero_txn: bool = False
+) -> dict[str, Any]:
+    """Compact merchant list from Common_SearchMerchantsByName's
+    `merchants[]` (the hand-written op selects only id/name/transactionCount,
+    so that is all there is to project). Merchants with no transactions are
+    dropped unless include_zero_txn. `truncated` is True when the server
+    returned a full page (len == limit), i.e. more matches may exist -- the
+    op has no totalCount; it is computed BEFORE the zero-txn filter."""
+    rows = data.get("merchants") or []
+    kept = [
+        {
+            "id": m.get("id"),
+            "name": m.get("name"),
+            "transaction_count": m.get("transactionCount"),
+        }
+        for m in rows
+        if include_zero_txn or (m.get("transactionCount") or 0) > 0
+    ]
+    return {
+        "merchants": kept,
+        "count": len(kept),
+        "truncated": len(rows) >= limit,
+    }
+
+
 def budgets(data: dict[str, Any]) -> dict[str, Any]:
     """Pass-through: the app's Common_GetJointPlanningData response is a
     strict superset of the old library's (same budgetData/categoryGroups/

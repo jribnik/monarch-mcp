@@ -235,3 +235,59 @@ async def test_get_account_type_options(fake_client):
     result = await reads.get_account_type_options()
     assert fake_client.calls == [("Common_GetAccountTypeOptions", {})]
     assert result["accountTypeOptions"][0]["type"]["name"] == "depository"
+
+
+@pytest.mark.asyncio
+async def test_get_merchants_compact_projection_and_defaults(fake_client):
+    fake_client.responses["Common_SearchMerchantsByName"] = {
+        "merchants": [
+            {"id": "m1", "name": "Costco", "transactionCount": 12, "__typename": "Merchant"},
+            {"id": "m2", "name": "Costco Gas", "transactionCount": 0, "__typename": "Merchant"},
+        ]
+    }
+    result = await reads.get_merchants()
+    assert fake_client.calls == [
+        ("Common_SearchMerchantsByName", {"limit": 100, "offset": 0})
+    ]
+    assert result == {
+        "merchants": [{"id": "m1", "name": "Costco", "transaction_count": 12}],
+        "count": 1,
+        "truncated": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_merchants_search_and_include_zero(fake_client):
+    fake_client.responses["Common_SearchMerchantsByName"] = {
+        "merchants": [
+            {"id": "m1", "name": "Costco", "transactionCount": 12},
+            {"id": "m2", "name": "Costco Gas", "transactionCount": 0},
+        ]
+    }
+    result = await reads.get_merchants(search=" cost ", limit=2, include_zero_txn=True)
+    assert fake_client.calls == [
+        ("Common_SearchMerchantsByName", {"search": "cost", "limit": 2, "offset": 0})
+    ]
+    assert [m["id"] for m in result["merchants"]] == ["m1", "m2"]
+    # a full page (len == limit) means more may exist
+    assert result["truncated"] is True and result["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_get_merchants_truncated_is_computed_before_zero_filter(fake_client):
+    fake_client.responses["Common_SearchMerchantsByName"] = {
+        "merchants": [
+            {"id": "m1", "name": "A", "transactionCount": 0},
+            {"id": "m2", "name": "B", "transactionCount": 0},
+        ]
+    }
+    result = await reads.get_merchants(limit=2)
+    assert result == {"merchants": [], "count": 0, "truncated": True}
+
+
+@pytest.mark.asyncio
+async def test_get_merchants_empty_and_bad_limit(fake_client):
+    fake_client.responses["Common_SearchMerchantsByName"] = {"merchants": None}
+    assert (await reads.get_merchants())["merchants"] == []
+    with pytest.raises(ValueError):
+        await reads.get_merchants(limit=0)
