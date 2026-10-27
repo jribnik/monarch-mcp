@@ -92,27 +92,53 @@ def transaction_details(data: dict[str, Any]) -> dict[str, Any]:
 
 def split_dry_run(
     txn: dict[str, Any],
-    proposed: list[dict[str, Any]],
+    split_data: list[dict[str, Any]],
     sum_ok: bool,
 ) -> dict[str, Any]:
-    """Preview shape for split_transaction/unsplit_transaction(dry_run=True):
-    the transaction's amount, its CURRENT splits (compacted from the drawer's
-    `splitTransactions`), the splits that would be sent, and whether they sum
-    exactly to the amount. `proposed` is already in tool-argument form."""
-    return {
+    """Preview shape for split_transaction/unsplit_transaction(dry_run=True).
+    `split_data` is the exact list `_split_item` builds for the real mutation
+    (camelCase wire form). proposed_splits shows the EFFECTIVE category and
+    merchant: an omitted one is inherited from the parent (verified live), so
+    it is reported with the parent's id/name and `*_inherited: true`.
+
+    Unsplit (`split_data == []` and the transaction not split) is a noop:
+    `noop: true`, `is_split: false`; nothing would be sent to change anything."""
+    parent_cat = txn.get("category") or {}
+    parent_mer = txn.get("merchant") or {}
+    current = [
+        {
+            "id": s.get("id"),
+            "amount": s.get("amount"),
+            "merchant": (s.get("merchant") or {}).get("name"),
+            "category": (s.get("category") or {}).get("name"),
+        }
+        for s in txn.get("splitTransactions") or []
+    ]
+    proposed = []
+    for d in split_data:
+        cat_inh = d.get("categoryId") is None
+        mer_inh = d.get("merchantName") is None
+        proposed.append({
+            "amount": d.get("amount"),
+            "category_id": parent_cat.get("id") if cat_inh else d["categoryId"],
+            "category_name": parent_cat.get("name") if cat_inh else None,
+            "category_inherited": cat_inh,
+            "merchant_name": parent_mer.get("name") if mer_inh else d["merchantName"],
+            "merchant_inherited": mer_inh,
+            "hide_from_reports": d.get("hideFromReports"),
+        })
+    out: dict[str, Any] = {
         "transaction_amount": txn.get("amount"),
-        "current_splits": [
-            {
-                "id": s.get("id"),
-                "amount": s.get("amount"),
-                "merchant": (s.get("merchant") or {}).get("name"),
-                "category": (s.get("category") or {}).get("name"),
-            }
-            for s in txn.get("splitTransactions") or []
-        ],
+        "is_split": bool(current),
+        "current_splits": current,
         "proposed_splits": proposed,
         "sum_ok": sum_ok,
     }
+    if not split_data and not current:
+        out["noop"] = True
+        out["note"] = "transaction is not split; unsplit would change nothing"
+        out["sum_ok"] = None
+    return out
 
 
 def recurring_transactions(data: dict[str, Any]) -> dict[str, Any]:
