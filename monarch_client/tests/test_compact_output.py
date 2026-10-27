@@ -65,19 +65,29 @@ def test_compact_row_fields():
     assert row == {
         "id": "t1", "date": "2026-01-15", "amount": -1.5, "pending": False,
         "merchant": "Merchant1", "merchant_id": "m1",
+        "original_statement": "PLAID NAME", "notes": "a note",
         "category": "Cat1", "category_id": "c1",
         "account": "Checking", "account_id": "a1",
         "review_status": "needs_review", "needs_review": True,
         "hide_from_reports": False, "is_split": False,
-        "tag_ids": ["tag1", "tag2"], "has_notes": True,
+        "tag_ids": ["tag1", "tag2"],
     }
-    assert project.transaction_compact_row(_raw_txn(2))["has_notes"] is False
+    assert project.transaction_compact_row(_raw_txn(2))["notes"] is None
+
+
+def test_compact_row_truncates_statement_and_notes():
+    t = _raw_txn(1)
+    t["plaidName"] = "TST* " + "A" * 100
+    t["notes"] = "n" * 200
+    row = project.transaction_compact_row(t)
+    assert len(row["original_statement"]) == 60 and row["original_statement"].startswith("TST* A")
+    assert len(row["notes"]) == 80 and row["original_statement"].endswith("\u2026")
 
 
 def test_compact_row_tolerates_missing_keys():
     row = project.transaction_compact_row({"id": "x"})
     assert row["id"] == "x" and row["merchant"] is None and row["tag_ids"] == []
-    assert row["has_notes"] is False
+    assert row["notes"] is None and row["original_statement"] is None
 
 
 def test_envelope_and_next_offset():
@@ -106,10 +116,28 @@ def test_default_budget_never_exceeded_with_100_synthetic_rows():
     assert project.TRANSACTIONS_BUDGET_CHARS == 40_000
 
 
-def test_full_detail_under_budget_is_the_raw_shape():
+def test_compact_single_oversized_row_raises_instead_of_looping():
+    with pytest.raises(ValueError, match="single transaction row"):
+        project.transactions_compact(_response(3, total=9), offset=0, budget=50)
+
+
+def test_compact_next_offset_when_total_unknown_uses_limit():
+    data = _response(5)
+    data["allTransactions"]["totalCount"] = None
+    assert project.transactions_compact(data, 0, limit=5)["next_offset"] == 5
+    assert project.transactions_compact(data, 0, limit=50)["next_offset"] is None
+
+
+def test_full_detail_under_budget_keeps_raw_shape_plus_envelope():
     data = _response(3)
-    assert project.transactions_full(data, offset=0) == project.transactions(data)
-    assert "truncated" not in project.transactions_full(data, offset=0)
+    out = project.transactions_full(data, offset=0)
+    assert out["allTransactions"] == project.transactions(data)["allTransactions"]
+    assert out["truncated"] is False and out["next_offset"] is None
+
+
+def test_full_detail_reports_next_offset_when_more_rows_exist():
+    out = project.transactions_full(_response(3, total=10), offset=4)
+    assert out["truncated"] is False and out["next_offset"] == 7
 
 
 def test_full_detail_over_budget_is_trimmed_with_next_offset():
@@ -127,12 +155,17 @@ def test_full_detail_single_oversized_row_raises():
 
 
 @pytest.mark.asyncio
-async def test_get_transactions_full_cap_and_budget_end_to_end(fake_client):
+async def test_get_transactions_full_budget_end_to_end_and_no_silent_clamp(fake_client):
     fake_client.responses["Web_GetTransactionsList"] = _response(25, total=90, bulk=4000)
-    out = await reads.get_transactions(limit=500, detail="full")
+    out = await reads.get_transactions(limit=25, detail="full")
     assert fake_client.calls[0][1]["limit"] == reads.FULL_DETAIL_MAX_LIMIT == 25
     assert len(json.dumps(out)) < project.TRANSACTIONS_BUDGET_CHARS
     assert out["truncated"] is True
+    with pytest.raises(ValueError, match="detail=.compact. or limit<=25"):
+        await reads.get_transactions(limit=26, detail="full")
+    with pytest.raises(ValueError, match="exceeds the maximum 200"):
+        await reads.get_transactions(limit=500)
+    assert len(fake_client.calls) == 1
 
 
 # ---- reads.get_transactions behavior --------------------------------------
@@ -150,15 +183,17 @@ async def test_default_is_compact_and_visible_only(fake_client):
 
 
 @pytest.mark.asyncio
-async def test_visibility_all_omits_the_filter_and_hidden_is_refused(fake_client):
+async def test_visibility_all_and_hidden_are_refused_not_guessed(fake_client):
     fake_client.responses["Web_GetTransactionsList"] = _response(0)
-    await reads.get_transactions(visibility="all")
-    assert "transactionVisibility" not in fake_client.calls[0][1]["filters"]
-    with pytest.raises(ValueError, match="not supported"):
-        await reads.get_transactions(visibility="hidden")
+    for v in ("all", "hidden"):
+        with pytest.raises(ValueError, match="not yet supported.*api-recon"):
+            await reads.get_transactions(visibility=v)
     with pytest.raises(ValueError, match="visibility"):
         await reads.get_transactions(visibility="bogus")
-    assert len(fake_client.calls) == 1
+    assert fake_client.calls == []
+    await reads.get_transactions(visibility="visible")
+    assert fake_client.calls[0][1]["filters"]["transactionVisibility"] == (
+        "non_hidden_transactions_only")
 
 
 @pytest.mark.asyncio
@@ -169,7 +204,7 @@ async def test_merchant_and_credits_only_filters(fake_client):
     assert f["merchants"] == ["m1", "m2"] and f["creditsOnly"] is True
     await reads.get_transactions(credits_only=False)
     f = fake_client.calls[1][1]["filters"]
-    assert f["creditsOnly"] is False and "merchants" not in f
+    assert "creditsOnly" not in f and "merchants" not in f  # False sends nothing
     await reads.get_transactions()
     f = fake_client.calls[2][1]["filters"]
     assert "creditsOnly" not in f and "merchants" not in f
@@ -239,13 +274,26 @@ async def test_list_accounts_compact_rows_and_totals(fake_client):
     assert [a["id"] for a in out["accounts"]] == ["a1", "a3", "a4", "a5"]
     assert out["accounts"][0] == {
         "id": "a1", "name": "Checking", "type": "depository", "subtype": "Sub Checking",
-        "balance": 1000.5, "institution": "Bank", "is_manual": False,
+        "balance": 1000.5, "institution": "Bank", "has_credential": True,
         "include_in_net_worth": True, "is_hidden": False,
         "updated_at": "2026-01-01T00:00:00Z",
     }
-    assert out["accounts"][1]["is_manual"] is True
+    assert out["accounts"][1]["has_credential"] is False
     assert out["totals"] == {"assets": 1020.5, "liabilities": 300.25, "net_worth": 720.25}
     assert "notes" not in out["accounts"][0]
+
+
+@pytest.mark.asyncio
+async def test_list_accounts_credit_balance_card_reduces_liabilities(fake_client):
+    # a card with a POSITIVE signedBalance (overpaid) must reduce liabilities
+    data = {"accountTypeSummaries": [{"type": {"name": "credit"}, "accounts": [
+        _acct("c1", "Owed", "credit", -300.0, False),
+        _acct("c2", "Overpaid", "credit", 50.0, False),
+        _acct("a1", "Checking", "depository", 1000.0, True),
+    ]}]}
+    fake_client.responses["Web_GetAccountsPage"] = data
+    out = await reads.list_accounts()
+    assert out["totals"] == {"assets": 1000.0, "liabilities": 250.0, "net_worth": 750.0}
 
 
 @pytest.mark.asyncio

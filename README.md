@@ -121,23 +121,23 @@ Then restart Claude Code so it connects. Ask things like:
 
 | Tool | Kind | What |
 |------|------|------|
-| `list_accounts` | read | compact account rows (id, name, type, subtype, balance, institution, is_manual, include_in_net_worth, is_hidden, updated_at) plus assets / liabilities / net-worth totals; hidden accounts omitted unless `include_hidden`; `account_types` filter; `detail="full"` = raw list |
+| `list_accounts` | read | compact account rows (id, name, type, subtype, balance, institution, has_credential (heuristic: linked to an institution; False = probably manual), include_in_net_worth, is_hidden, updated_at) plus assets / liabilities / net-worth totals over the returned rows flagged `includeInNetWorth` (a credit-balance card reduces liabilities; `includeBalanceInNetWorth` is not used); hidden accounts omitted unless `include_hidden`; `account_types` filter; `detail="full"` = raw list |
 | `get_categories` | read | categories + groups (for valid ids) |
 | `get_tags` | read | tags (for valid ids) |
 | `get_budgets` | read | budgets for a date range |
 | `get_cashflow_summary` | read | income/expense totals |
-| `get_transactions` | read | filtered transaction search; **compact rows by default** in a `{transactions, total_count, returned, offset, next_offset, truncated}` envelope (default limit 50, max 200, pages trimmed to a ~40K-char budget); hidden transactions excluded unless `visibility="all"` (hidden-only unsupported); filters incl. `merchant_ids`, `credits_only`; `total_count_only`; `detail="full"` = raw rows (limit max 25). The nightly validator needs `contrib/run.sh.compact-output.patch` |
+| `get_transactions` | read | filtered transaction search; **compact rows by default** in a `{transactions, total_count, returned, offset, next_offset, truncated}` envelope (default limit 50, max 200, pages trimmed to a ~40K-char budget); rows include `original_statement` (raw plaidName, <=60 chars) and `notes` (<=80 chars); a single row that exceeds the budget raises; hidden transactions always excluded (`visibility="all"`/`"hidden"` raise "not yet supported" until an app request is captured via api-recon); filters incl. `merchant_ids` (unverified live) and `credits_only` (sent only when True); `total_count_only`; `detail="full"` = raw rows plus `truncated`/`next_offset` (no longer byte-identical to the old shape; limit > 25 raises instead of clamping). The nightly validator needs `contrib/run.sh.compact-output.patch` |
 | `get_transaction_details` | read | one transaction incl. splits |
 | `get_transaction_rules` | read | auto-categorization rules |
 | `preview_transaction_rule` | read (write-adjacent) | dry-run a rule's match set |
 | `get_recurring_transactions` | read | recurring transaction streams |
 | `get_account_type_options` | read | valid type/subtype pairs for create_manual_account |
-| `get_merchants` | read | merchants (id, name, transaction_count) with optional name `search`; zero-transaction merchants hidden unless `include_zero_txn`; `truncated` flags a full page |
-| `get_net_worth_history` | read | net worth / assets / liabilities over a date range, downsampled (`interval` auto/day/week/month; auto = day <=60d, week <=1y, else month); totals only |
+| `get_merchants` | read | merchants (id, name, transaction_count) with optional name `search`; zero-transaction merchants hidden unless `include_zero_txn`; pages with `offset`; returns `count`, `fetched`, `more_may_exist` (full page, computed before the zero-txn filter) and `next_offset`; order is server-defined without `search` |
+| `get_net_worth_history` | read | net worth / assets / liabilities over a date range, downsampled (`interval` auto/day/week/month; auto = day <=60d, week <=1y, else month); totals only; `endDate` sent only for a non-today `end_date`; server adaptive granularity may return coarser points than `interval` |
 | `get_credit_score_history` | read | credit score snapshots in a date range (date, score, user display name only) |
 | `get_household_members` | read | household members (id, name, role, `is_me`) |
 | `get_businesses` | read | business entities with linked accounts and counts |
-| `get_goals` | read | savings goals: balance, target, progress, contribution, forecast, allocations |
+| `get_goals` | read | savings goals: balance, target, progress, contribution, forecast, allocations; archived goals excluded unless `include_archived` |
 | `recategorize_transaction` | **write** | set a transaction's category |
 | `update_transaction` | **write** | edit merchant/amount/date/notes/flags; `reviewed=True` = Mark as reviewed |
 | `set_transaction_tags` | **write** | replace a transaction's tags |

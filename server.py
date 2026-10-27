@@ -59,9 +59,10 @@ Workflow:
   Write tools take IDs, not names, except where a parameter says otherwise.
 - Amounts are signed: negative = expense/debit, positive = income/credit.
 - Lists are paged: use offset/limit (get_transactions defaults to 50, compact rows)
-  and keep paging while next_offset is non-null. Hidden transactions and
-  hidden accounts are excluded unless you ask (visibility="all" /
-  include_hidden=True); detail="full" gives the raw, much larger shape.
+  and keep paging while next_offset is non-null. Hidden transactions are always
+  excluded (visibility="all"/"hidden" is not yet supported); hidden accounts are
+  omitted unless include_hidden=True. detail="full" gives the raw, much larger
+  shape (limit <= 25).
 - Preview before committing: call preview_transaction_rule (a dry run) to see
   what a rule would match before create_transaction_rule or
   update_transaction_rule, especially with apply_to_existing_transactions=True.
@@ -101,9 +102,11 @@ async def list_accounts(
 ) -> dict[str, Any]:
     """
     List accounts. Default (detail="compact"): one slim row per account (id,
-    name, type, subtype, balance, institution, is_manual, include_in_net_worth,
+    name, type, subtype, balance, institution, has_credential, include_in_net_worth,
     is_hidden, updated_at) plus totals {assets, liabilities, net_worth} over the
-    accounts flagged include_in_net_worth. Hidden accounts are omitted unless
+    returned accounts flagged include_in_net_worth (a credit-balance card reduces
+    liabilities). has_credential is a heuristic: True = linked to an institution
+    (syncs), False = probably a manual account. Hidden accounts are omitted unless
     include_hidden=True. account_types filters by type name (e.g. "depository")
     and narrows the totals too. detail="full" returns the raw account list
     (every account, other parameters ignored).
@@ -164,21 +167,27 @@ async def get_transactions(
 
     - search: free-text match on merchant/notes; "" for all.
     - category_ids / account_ids / tag_ids / merchant_ids: filter to those ids.
-    - credits_only: True = only credits (income), False = only debits.
-    - visibility: "visible" (default) excludes hidden transactions (e.g. the
-      auto-hidden Interest/Dividends ones); "all" includes them. A hidden-only
-      mode is not supported.
+    - merchant_ids: filter to those merchant ids (UNVERIFIED against a live
+      call; fall back to search if it returns nothing unexpectedly).
+    - credits_only: True = only credits (income). Leave unset otherwise (False
+      does NOT mean debits only; it sends nothing).
+    - visibility: only "visible" (default; excludes hidden transactions such as
+      the auto-hidden Interest/Dividends ones). "all" and "hidden" raise "not yet
+      supported" -- they need a captured app request (api-recon).
     - order_by: only "date" (newest first).
     - total_count_only: return just {total_count} for the filters.
 
     Default detail="compact" returns {transactions, total_count, returned,
     offset, next_offset, truncated}; each row has id, date, amount, pending,
-    merchant, merchant_id, category, category_id, account, account_id,
-    review_status, needs_review, hide_from_reports, is_split, tag_ids,
-    has_notes. Page while next_offset is non-null (limit max 200; a page is also
-    trimmed to a ~40K-character budget, setting truncated). Use
-    get_transaction_details for one transaction's full record. detail="full"
-    returns the raw rows (limit max 25).
+    merchant, merchant_id, original_statement (raw plaidName, <=60 chars; often
+    the best clue to the real merchant/sender), notes (<=80 chars), category,
+    category_id, account, account_id, review_status, needs_review,
+    hide_from_reports, is_split, tag_ids. Page while next_offset is non-null
+    (limit max 200, else error; a page is also trimmed to a ~40K-character
+    budget, setting truncated). Use get_transaction_details for one
+    transaction's full record. detail="full" returns the raw rows plus
+    truncated/next_offset fields; limit > 25 in full mode is an error (use
+    compact or limit<=25).
 
     To find items needing cleanup, fetch a date range and look at
     needs_review / review_status / category.
@@ -358,18 +367,25 @@ async def get_merchants(
     search: Optional[str] = None,
     limit: int = 100,
     include_zero_txn: bool = False,
+    offset: int = 0,
 ) -> dict[str, Any]:
     """
     List merchants (id, name, transaction_count). search is a substring match
-    on the merchant name; omit it to list merchants. Merchants with no
-    transactions are hidden unless include_zero_txn=True. If `truncated` is
-    true the page was full and more may exist -- narrow `search` (there is no
-    offset). Useful for finding duplicate merchants (see the merge convention in
-    the server instructions) and for the exact name to pass to update_merchant /
-    set_merchant_name.
+    on the merchant name; without it the order is server-defined (not
+    alphabetical or by count). Merchants with no transactions are hidden unless
+    include_zero_txn=True. Returns count (rows returned), fetched (raw page
+    size before the zero-txn filter) and more_may_exist (a full page was
+    fetched, so more may exist -- computed before the filter). When true,
+    next_offset is the offset to pass for the next page. Useful for finding
+    duplicate merchants (see the merge convention in the server instructions)
+    and for the exact name to use when renaming: change a transaction's
+    merchant via update_transaction, or set a merchant name from a rule via
+    create_transaction_rule / update_transaction_rule (set_merchant_name is a
+    rule parameter, not a standalone tool); update_merchant edits the merchant
+    itself.
     """
     return await client_reads.get_merchants(
-        search=search, limit=limit, include_zero_txn=include_zero_txn
+        search=search, limit=limit, include_zero_txn=include_zero_txn, offset=offset
     )
 
 
@@ -381,8 +397,10 @@ async def get_net_worth_history(
     Net worth over time (net_worth, assets, liabilities per point). Dates are
     'YYYY-MM-DD'; end_date defaults to today. interval is "auto", "day", "week"
     or "month" and downsamples to the last value of each period; auto = day for
-    spans <= 60 days, week for <= 1 year, else month. Totals only, no
-    per-account breakdown.
+    spans <= 60 days, week for <= 1 year, else month. The server's adaptive
+    granularity may return coarser points than `interval` on long ranges; each
+    point is labelled with its own snapshot date (not a bucket boundary). Totals
+    only, no per-account breakdown.
     """
     return await client_reads.get_net_worth_history(
         start_date=start_date, end_date=end_date, interval=interval
@@ -414,12 +432,13 @@ async def get_businesses() -> dict[str, Any]:
 
 
 @mcp.tool()
-async def get_goals() -> dict[str, Any]:
+async def get_goals(include_archived: bool = False) -> dict[str, Any]:
     """
     List savings goals (balance, target, progress, monthly contribution,
     forecast, per-account allocation) plus this month's total goal balance.
+    Archived goals are excluded unless include_archived=True.
     """
-    return await client_reads.get_goals()
+    return await client_reads.get_goals(include_archived=include_archived)
 
 
 @mcp.tool()
@@ -941,8 +960,10 @@ async def split_transaction(
     `errors` in the result; use unsplit_transaction to undo.
 
     dry_run=True sends nothing (works even with writes disabled): it returns
-    {transaction_amount, current_splits, proposed_splits, sum_ok} so you can
-    check the amounts sum before committing."""
+    {transaction_amount, is_split, current_splits, proposed_splits, sum_ok} so you
+    can check the amounts sum before committing. proposed_splits is the exact
+    payload that would be sent (unknown keys rejected as in a real call) showing
+    the EFFECTIVE category/merchant (flagged *_inherited when taken from the parent)."""
     return await client_writes_splits_rules.split_transaction(
         transaction_id=transaction_id, splits=splits, dry_run=dry_run)
 
@@ -953,7 +974,8 @@ async def unsplit_transaction(
 ) -> dict[str, Any]:
     """Remove a transaction's split, restoring a single transaction (WRITE).
     dry_run=True only returns the current splits and sends nothing (works even
-    with writes disabled)."""
+    with writes disabled); on a transaction that is not split it returns
+    noop: true, is_split: false."""
     return await client_writes_splits_rules.unsplit_transaction(
         transaction_id=transaction_id, dry_run=dry_run)
 

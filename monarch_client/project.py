@@ -57,11 +57,17 @@ def accounts_compact(
     `account_types` (matched case-insensitively against `type.name`)
     restricts both rows and totals.
 
-    Totals sum `signedBalance` over the rows whose `includeInNetWorth` flag
-    is set: assets = isAsset rows, liabilities = the absolute sum of the
-    others, net_worth = assets - liabilities. `is_manual` is inferred from
-    the account having no linked credential (the list op does not select
-    isManual)."""
+    Totals sum `signedBalance` over the returned rows whose
+    `includeInNetWorth` flag is set (the account-level "Include in net worth"
+    setting; the list op also selects `includeBalanceInNetWorth`, whose
+    meaning is unverified, so it is NOT used). assets = isAsset rows;
+    liabilities = -(sum of signedBalance over the others), so a credit-balance
+    card (positive signedBalance on a liability) REDUCES liabilities;
+    net_worth = assets - liabilities. Because totals cover the returned rows,
+    hidden accounts count only with include_hidden, and account_types narrows
+    them. `has_credential` is a HEURISTIC: True when the account has a linked
+    institution credential (so it syncs); False for manual accounts (the list
+    op does not select isManual, so this is inferred, not authoritative)."""
     wanted = {t.lower() for t in account_types or []}
     rows: list[dict[str, Any]] = []
     assets = liabilities = 0.0
@@ -80,7 +86,7 @@ def accounts_compact(
                 "subtype": (a.get("subtype") or {}).get("display"),
                 "balance": a.get("signedBalance"),
                 "institution": (a.get("institution") or {}).get("name") or cred_inst,
-                "is_manual": not a.get("credential"),
+                "has_credential": bool(a.get("credential")),
                 "include_in_net_worth": a.get("includeInNetWorth"),
                 "is_hidden": a.get("isHidden"),
                 "updated_at": a.get("updatedAt"),
@@ -90,7 +96,7 @@ def accounts_compact(
             if a.get("isAsset"):
                 assets += _money(a.get("signedBalance"))
             else:
-                liabilities += abs(_money(a.get("signedBalance")))
+                liabilities -= _money(a.get("signedBalance"))
     return {
         "accounts": rows,
         "count": len(rows),
@@ -118,14 +124,16 @@ def tags(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def merchants(
-    data: dict[str, Any], limit: int, include_zero_txn: bool = False
+    data: dict[str, Any], limit: int, include_zero_txn: bool = False, offset: int = 0
 ) -> dict[str, Any]:
     """Compact merchant list from Common_SearchMerchantsByName's
     `merchants[]` (the hand-written op selects only id/name/transactionCount,
     so that is all there is to project). Merchants with no transactions are
-    dropped unless include_zero_txn. `truncated` is True when the server
-    returned a full page (len == limit), i.e. more matches may exist -- the
-    op has no totalCount; it is computed BEFORE the zero-txn filter."""
+    dropped unless include_zero_txn. `fetched` is the raw page size (before
+    the zero-txn filter); `count` is what is returned. `more_may_exist` is
+    True when the server returned a full page (fetched >= limit) -- the op has
+    no totalCount; it is computed BEFORE the zero-txn filter. `next_offset`
+    (offset + fetched) is set only when more_may_exist, else None."""
     rows = data.get("merchants") or []
     kept = [
         {
@@ -136,10 +144,13 @@ def merchants(
         for m in rows
         if include_zero_txn or (m.get("transactionCount") or 0) > 0
     ]
+    more = len(rows) >= limit
     return {
         "merchants": kept,
         "count": len(kept),
-        "truncated": len(rows) >= limit,
+        "fetched": len(rows),
+        "more_may_exist": more,
+        "next_offset": offset + len(rows) if more else None,
     }
 
 
@@ -158,7 +169,8 @@ def net_worth_history(data: dict[str, Any], interval: str) -> dict[str, Any]:
     liabilitiesBalance) and downsample to `interval` ("day"/"week"/"month")
     by keeping the LAST snapshot of each bucket (its end-of-period value).
     `interval` must already be resolved (not "auto"); see
-    reads.get_net_worth_history. Output is oldest-first."""
+    reads.get_net_worth_history. Output is oldest-first; each point carries
+    the date of its own (last) snapshot in the bucket, not the bucket edge."""
     snaps = sorted(
         (s for s in data.get("aggregateSnapshots") or [] if s.get("date")),
         key=lambda s: s["date"],
@@ -242,12 +254,15 @@ def businesses(data: dict[str, Any]) -> dict[str, Any]:
     return {"businesses": out}
 
 
-def goals(data: dict[str, Any]) -> dict[str, Any]:
+def goals(data: dict[str, Any], include_archived: bool = False) -> dict[str, Any]:
     """`savingsGoals[]` (GoalSummaryFields) compacted to the figures a person
     reads on the Goals page, plus each goal's per-account allocation and the
-    two household-level balances. Image/logo/icon fields are dropped."""
+    two household-level balances. Image/logo/icon fields are dropped.
+    Archived goals (archivedAt set) are skipped unless include_archived."""
     out = []
     for g in data.get("savingsGoals") or []:
+        if g.get("archivedAt") is not None and not include_archived:
+            continue
         out.append(
             {
                 "id": g.get("id"),
@@ -311,10 +326,24 @@ def transactions(data: dict[str, Any]) -> dict[str, Any]:
 TRANSACTIONS_BUDGET_CHARS = 40_000
 
 
+STATEMENT_MAX_CHARS = 60
+NOTES_MAX_CHARS = 80
+
+
+def _clip(value: Any, limit: int) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    value = value.strip()
+    return value if len(value) <= limit else value[: limit - 1] + "\u2026"
+
+
 def transaction_compact_row(t: dict[str, Any]) -> dict[str, Any]:
     """One transaction from `allTransactions.results[]` reduced to the fields
-    a review/cleanup pass needs (no plaid names, logos, goals, attachments,
-    recurrence groups ...). Use get_transaction_details for the rest."""
+    a review/cleanup pass needs (no logos, goals, attachments, recurrence
+    groups ...). `original_statement` is the raw plaidName (<= 60 chars) and
+    `notes` the transaction notes (<= 80 chars, None when blank): validators
+    often find the real merchant/sender only there, since `merchant` can be
+    confidently wrong. Use get_transaction_details for full-length values."""
     merchant = t.get("merchant") or {}
     category = t.get("category") or {}
     account = t.get("account") or {}
@@ -325,6 +354,8 @@ def transaction_compact_row(t: dict[str, Any]) -> dict[str, Any]:
         "pending": t.get("pending"),
         "merchant": merchant.get("name"),
         "merchant_id": merchant.get("id"),
+        "original_statement": _clip(t.get("plaidName"), STATEMENT_MAX_CHARS),
+        "notes": _clip(t.get("notes"), NOTES_MAX_CHARS),
         "category": category.get("name"),
         "category_id": category.get("id"),
         "account": account.get("displayName"),
@@ -334,7 +365,6 @@ def transaction_compact_row(t: dict[str, Any]) -> dict[str, Any]:
         "hide_from_reports": t.get("hideFromReports"),
         "is_split": t.get("isSplitTransaction"),
         "tag_ids": [x.get("id") for x in t.get("tags") or []],
-        "has_notes": bool((t.get("notes") or "").strip()),
     }
 
 
@@ -342,20 +372,35 @@ def _size(obj: Any) -> int:
     return len(json.dumps(obj))
 
 
-def _next_offset(offset: int, returned: int, total: Any) -> int | None:
+def _next_offset(
+    offset: int, returned: int, total: Any, limit: int | None = None
+) -> int | None:
+    """Offset of the next page, or None when no rows remain. With a known
+    total this is exact; without one, a short page (returned < limit) means
+    the end."""
     nxt = offset + returned
-    if isinstance(total, int) and nxt >= total:
+    if not returned:
         return None
-    return nxt if returned else None
+    if isinstance(total, int):
+        return None if nxt >= total else nxt
+    if limit is not None and returned < limit:
+        return None
+    return nxt
 
 
 def transactions_compact(
-    data: dict[str, Any], offset: int, budget: int = TRANSACTIONS_BUDGET_CHARS
+    data: dict[str, Any],
+    offset: int,
+    budget: int = TRANSACTIONS_BUDGET_CHARS,
+    limit: int | None = None,
 ) -> dict[str, Any]:
     """Envelope `{transactions, total_count, returned, offset, next_offset,
     truncated}`. Rows are trimmed from the end until the serialized envelope
     fits `budget`; trimming sets `truncated` and next_offset resumes right
-    after the last kept row (None when nothing remains)."""
+    after the last kept row. next_offset is non-null whenever more rows
+    exist (None only on the last page). If even the first row alone does not
+    fit `budget`, raises instead of returning an empty page (which would loop
+    a pager forever)."""
     block = data.get("allTransactions") or {}
     total = block.get("totalCount")
     rows = [transaction_compact_row(t) for t in block.get("results") or []]
@@ -367,7 +412,7 @@ def transactions_compact(
             "total_count": total,
             "returned": len(rows),
             "offset": offset,
-            "next_offset": _next_offset(offset, len(rows), total),
+            "next_offset": _next_offset(offset, len(rows), total, limit),
             "truncated": len(rows) < fetched,
         }
 
@@ -375,6 +420,11 @@ def transactions_compact(
     while rows and _size(out) > budget:
         rows.pop()
         out = build()
+    if fetched and not rows:
+        raise ValueError(
+            "a single transaction row exceeds the output size budget "
+            f"({budget} chars); cannot page past it"
+        )
     if len(rows) < fetched:
         # trimmed rows were fetched but not returned: resume right after the last kept row
         out["next_offset"] = offset + len(rows)
@@ -382,26 +432,38 @@ def transactions_compact(
 
 
 def transactions_full(
-    data: dict[str, Any], offset: int, budget: int = TRANSACTIONS_BUDGET_CHARS
+    data: dict[str, Any],
+    offset: int,
+    budget: int = TRANSACTIONS_BUDGET_CHARS,
+    limit: int | None = None,
 ) -> dict[str, Any]:
-    """The raw `transactions` shape, byte-for-byte, when it fits `budget`.
-    Over budget, rows are trimmed from the end and `truncated: True` plus
-    `next_offset` are added to the top level (only then)."""
+    """The raw `transactions` shape plus envelope fields `truncated` (rows
+    were trimmed to fit `budget`) and `next_offset` (non-null whenever more
+    rows exist), ALWAYS present. NOT byte-compatible with the pre-compact
+    shape (which had neither). Over budget, rows are trimmed from the end and
+    next_offset resumes after the last kept row."""
     out = transactions(data)
     block = out["allTransactions"]
-    if _size(out) <= budget:
-        return out
     rows = list(block.get("results") or [])
     total = block.get("totalCount")
-    out = {**out, "allTransactions": {**block, "results": rows}}
+    fetched = len(rows)
+    out = {
+        **out,
+        "allTransactions": {**block, "results": rows},
+        "truncated": False,
+        "next_offset": None,
+    }
     while rows and _size(out) > budget:
         rows.pop()
-    if not rows:
+    if fetched and not rows:
         raise ValueError(
             "a single transaction exceeds the output size budget; use detail='compact'"
         )
-    out["truncated"] = True
-    out["next_offset"] = offset + len(rows)
+    out["truncated"] = len(rows) < fetched
+    out["next_offset"] = (
+        offset + len(rows) if out["truncated"]
+        else _next_offset(offset, len(rows), total, limit)
+    )
     return out
 
 
@@ -416,27 +478,53 @@ def transaction_details(data: dict[str, Any]) -> dict[str, Any]:
 
 def split_dry_run(
     txn: dict[str, Any],
-    proposed: list[dict[str, Any]],
+    split_data: list[dict[str, Any]],
     sum_ok: bool,
 ) -> dict[str, Any]:
-    """Preview shape for split_transaction/unsplit_transaction(dry_run=True):
-    the transaction's amount, its CURRENT splits (compacted from the drawer's
-    `splitTransactions`), the splits that would be sent, and whether they sum
-    exactly to the amount. `proposed` is already in tool-argument form."""
-    return {
+    """Preview shape for split_transaction/unsplit_transaction(dry_run=True).
+    `split_data` is the exact list `_split_item` builds for the real mutation
+    (camelCase wire form). proposed_splits shows the EFFECTIVE category and
+    merchant: an omitted one is inherited from the parent (verified live), so
+    it is reported with the parent's id/name and `*_inherited: true`.
+
+    Unsplit (`split_data == []` and the transaction not split) is a noop:
+    `noop: true`, `is_split: false`; nothing would be sent to change anything."""
+    parent_cat = txn.get("category") or {}
+    parent_mer = txn.get("merchant") or {}
+    current = [
+        {
+            "id": s.get("id"),
+            "amount": s.get("amount"),
+            "merchant": (s.get("merchant") or {}).get("name"),
+            "category": (s.get("category") or {}).get("name"),
+        }
+        for s in txn.get("splitTransactions") or []
+    ]
+    proposed = []
+    for d in split_data:
+        cat_inh = d.get("categoryId") is None
+        mer_inh = d.get("merchantName") is None
+        proposed.append({
+            "amount": d.get("amount"),
+            "category_id": parent_cat.get("id") if cat_inh else d["categoryId"],
+            "category_name": parent_cat.get("name") if cat_inh else None,
+            "category_inherited": cat_inh,
+            "merchant_name": parent_mer.get("name") if mer_inh else d["merchantName"],
+            "merchant_inherited": mer_inh,
+            "hide_from_reports": d.get("hideFromReports"),
+        })
+    out: dict[str, Any] = {
         "transaction_amount": txn.get("amount"),
-        "current_splits": [
-            {
-                "id": s.get("id"),
-                "amount": s.get("amount"),
-                "merchant": (s.get("merchant") or {}).get("name"),
-                "category": (s.get("category") or {}).get("name"),
-            }
-            for s in txn.get("splitTransactions") or []
-        ],
+        "is_split": bool(current),
+        "current_splits": current,
         "proposed_splits": proposed,
         "sum_ok": sum_ok,
     }
+    if not split_data and not current:
+        out["noop"] = True
+        out["note"] = "transaction is not split; unsplit would change nothing"
+        out["sum_ok"] = None
+    return out
 
 
 def recurring_transactions(data: dict[str, Any]) -> dict[str, Any]:
