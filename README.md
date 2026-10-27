@@ -132,7 +132,7 @@ Then restart Claude Code so it connects. Ask things like:
 | `preview_transaction_rule` | read (write-adjacent) | dry-run a rule's match set |
 | `get_recurring_transactions` | read | recurring transaction streams |
 | `get_account_type_options` | read | valid type/subtype pairs for create_manual_account |
-| `get_merchants` | read | merchants (id, name, transaction_count) with optional name `search`; zero-transaction merchants hidden unless `include_zero_txn`; `truncated` flags a full page |
+| `get_merchants` | read | merchants (id, name, transaction_count) with optional name `search`; zero-transaction merchants hidden unless `include_zero_txn`; pages with `offset`; returns `count`, `fetched`, `more_may_exist` (full page, computed before the zero-txn filter) and `next_offset`; order is server-defined without `search` |
 | `recategorize_transaction` | **write** | set a transaction's category |
 | `update_transaction` | **write** | edit merchant/amount/date/notes/flags; `reviewed=True` = Mark as reviewed |
 | `set_transaction_tags` | **write** | replace a transaction's tags |

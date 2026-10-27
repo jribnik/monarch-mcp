@@ -271,18 +271,25 @@ async def get_merchants(
     search: Optional[str] = None,
     limit: int = 100,
     include_zero_txn: bool = False,
+    offset: int = 0,
 ) -> dict[str, Any]:
     """
     List merchants (id, name, transaction_count). search is a substring match
-    on the merchant name; omit it to list merchants. Merchants with no
-    transactions are hidden unless include_zero_txn=True. If `truncated` is
-    true the page was full and more may exist -- narrow `search` (there is no
-    offset). Useful for finding duplicate merchants (see the merge convention in
-    the server instructions) and for the exact name to pass to update_merchant /
-    set_merchant_name.
+    on the merchant name; without it the order is server-defined (not
+    alphabetical or by count). Merchants with no transactions are hidden unless
+    include_zero_txn=True. Returns count (rows returned), fetched (raw page
+    size before the zero-txn filter) and more_may_exist (a full page was
+    fetched, so more may exist -- computed before the filter). When true,
+    next_offset is the offset to pass for the next page. Useful for finding
+    duplicate merchants (see the merge convention in the server instructions)
+    and for the exact name to use when renaming: change a transaction's
+    merchant via update_transaction, or set a merchant name from a rule via
+    create_transaction_rule / update_transaction_rule (set_merchant_name is a
+    rule parameter, not a standalone tool); update_merchant edits the merchant
+    itself.
     """
     return await client_reads.get_merchants(
-        search=search, limit=limit, include_zero_txn=include_zero_txn
+        search=search, limit=limit, include_zero_txn=include_zero_txn, offset=offset
     )
 
 

@@ -252,7 +252,9 @@ async def test_get_merchants_compact_projection_and_defaults(fake_client):
     assert result == {
         "merchants": [{"id": "m1", "name": "Costco", "transaction_count": 12}],
         "count": 1,
-        "truncated": False,
+        "fetched": 2,
+        "more_may_exist": False,
+        "next_offset": None,
     }
 
 
@@ -270,7 +272,23 @@ async def test_get_merchants_search_and_include_zero(fake_client):
     ]
     assert [m["id"] for m in result["merchants"]] == ["m1", "m2"]
     # a full page (len == limit) means more may exist
-    assert result["truncated"] is True and result["count"] == 2
+    assert result["more_may_exist"] is True and result["count"] == 2
+    assert result["next_offset"] == 2 and "truncated" not in result
+
+
+@pytest.mark.asyncio
+async def test_get_merchants_offset_is_sent_and_advances(fake_client):
+    fake_client.responses["Common_SearchMerchantsByName"] = {
+        "merchants": [{"id": "m1", "name": "A", "transactionCount": 1},
+                      {"id": "m2", "name": "B", "transactionCount": 1}]
+    }
+    result = await reads.get_merchants(limit=2, offset=40)
+    assert fake_client.calls == [
+        ("Common_SearchMerchantsByName", {"limit": 2, "offset": 40})
+    ]
+    assert result["next_offset"] == 42
+    with pytest.raises(ValueError):
+        await reads.get_merchants(offset=-1)
 
 
 @pytest.mark.asyncio
@@ -282,7 +300,8 @@ async def test_get_merchants_truncated_is_computed_before_zero_filter(fake_clien
         ]
     }
     result = await reads.get_merchants(limit=2)
-    assert result == {"merchants": [], "count": 0, "truncated": True}
+    assert result == {"merchants": [], "count": 0, "fetched": 2,
+                      "more_may_exist": True, "next_offset": 2}
 
 
 @pytest.mark.asyncio
