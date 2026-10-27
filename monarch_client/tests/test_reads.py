@@ -291,3 +291,212 @@ async def test_get_merchants_empty_and_bad_limit(fake_client):
     assert (await reads.get_merchants())["merchants"] == []
     with pytest.raises(ValueError):
         await reads.get_merchants(limit=0)
+
+
+# ---- net worth / credit score / household / businesses / goals -------------
+# All fixtures below are synthetic (structure only), not captured values.
+
+
+def _snaps(start: date, days: int):
+    from datetime import timedelta
+
+    return [
+        {
+            "date": (start + timedelta(days=i)).isoformat(),
+            "balance": 1000.0 + i,
+            "assetsBalance": 1500.0 + i,
+            "liabilitiesBalance": -500.0,
+            "__typename": "AggregateSnapshot",
+        }
+        for i in range(days)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_net_worth_auto_short_span_is_daily(fake_client):
+    fake_client.responses["Common_GetAggregateSnapshots"] = {
+        "aggregateSnapshots": _snaps(date(2026, 3, 1), 10)
+    }
+    result = await reads.get_net_worth_history("2026-03-01", "2026-03-10")
+    assert fake_client.calls == [
+        (
+            "Common_GetAggregateSnapshots",
+            {"filters": {"startDate": "2026-03-01", "endDate": "2026-03-10",
+                         "useAdaptiveGranularity": True}},
+        )
+    ]
+    assert result["interval"] == "day" and result["count"] == 10
+    assert result["points"][0] == {
+        "date": "2026-03-01", "net_worth": 1000.0, "assets": 1500.0, "liabilities": -500.0
+    }
+
+
+@pytest.mark.asyncio
+async def test_net_worth_auto_medium_span_is_weekly_last_of_week(fake_client):
+    # 2026-03-02 is a Monday: 14 days -> 2 ISO weeks
+    fake_client.responses["Common_GetAggregateSnapshots"] = {
+        "aggregateSnapshots": _snaps(date(2026, 3, 2), 14)
+    }
+    result = await reads.get_net_worth_history("2026-03-02", "2026-07-01")
+    assert result["interval"] == "week"
+    assert [p["date"] for p in result["points"]] == ["2026-03-08", "2026-03-15"]
+    assert result["points"][0]["net_worth"] == 1006.0  # last snapshot of the week
+
+
+@pytest.mark.asyncio
+async def test_net_worth_auto_long_span_is_monthly_and_unsorted_input_ok(fake_client):
+    snaps = _snaps(date(2026, 1, 30), 5)  # Jan 30, 31, Feb 1, 2, 3
+    snaps.reverse()
+    fake_client.responses["Common_GetAggregateSnapshots"] = {"aggregateSnapshots": snaps}
+    result = await reads.get_net_worth_history("2024-01-01", "2026-02-03")
+    assert result["interval"] == "month"
+    assert [p["date"] for p in result["points"]] == ["2026-01-31", "2026-02-03"]
+
+
+@pytest.mark.asyncio
+async def test_net_worth_explicit_interval_default_end_and_validation(fake_client, monkeypatch):
+    class _FixedDate(date):
+        @classmethod
+        def today(cls):
+            return date(2026, 3, 15)
+
+    monkeypatch.setattr(reads, "date", _FixedDate)
+    fake_client.responses["Common_GetAggregateSnapshots"] = {"aggregateSnapshots": None}
+    result = await reads.get_net_worth_history("2026-03-01", interval="month")
+    assert fake_client.calls[0][1]["filters"]["endDate"] == "2026-03-15"
+    assert result == {"interval": "month", "points": [], "count": 0}
+    for kwargs in (
+        {"start_date": "03/01/2026"},
+        {"start_date": "2026-03-01", "interval": "hour"},
+        {"start_date": "2026-03-20"},  # after the default end
+    ):
+        with pytest.raises(ValueError):
+            await reads.get_net_worth_history(**kwargs)
+
+
+@pytest.mark.asyncio
+async def test_credit_score_history_projects_only_date_score_name(fake_client):
+    fake_client.responses["Common_GetSpinwheelCreditScoreSnapshots"] = {
+        "me": {"id": "u1"},
+        "myHousehold": {
+            "id": "h",
+            "users": [
+                {"id": "u1", "name": "A Person", "displayName": "Ay",
+                 "profilePictureUrl": "https://example.invalid/a.png"},
+                {"id": "u2", "name": "b@example.invalid", "displayName": "Bee",
+                 "profilePictureUrl": None},
+            ],
+        },
+        "spinwheelUser": {
+            "id": "sw", "onboardingStatus": "DONE", "onboardingErrorMessage": None,
+            "spinwheelUserId": "SECRET", "creditScoreRefreshSubscriptionId": "SECRET2",
+            "user": {"id": "u1", "name": "A Person", "displayName": "Ay"},
+        },
+        "creditScoreSnapshots": [
+            {"reportedDate": "2026-02-01", "score": 700, "user": {"id": "u1"}},
+            {"reportedDate": "2026-01-01", "score": 690, "user": {"id": "u1"}},
+            {"reportedDate": "2026-02-01", "score": 650, "user": {"id": "u2"}},
+            {"reportedDate": "2025-12-31", "score": 600, "user": {"id": "u1"}},
+            {"reportedDate": "2026-03-02", "score": 710, "user": {"id": "u1"}},
+        ],
+    }
+    result = await reads.get_credit_score_history("2026-01-01", "2026-03-01")
+    assert fake_client.calls == [("Common_GetSpinwheelCreditScoreSnapshots", {})]
+    assert result == {
+        "scores": [
+            {"date": "2026-01-01", "score": 690, "user": "Ay"},
+            {"date": "2026-02-01", "score": 700, "user": "Ay"},
+            {"date": "2026-02-01", "score": 650, "user": "Bee"},
+        ],
+        "count": 3,
+    }
+    flat = repr(result)
+    for leaked in ("SECRET", "A Person", "example.invalid", "onboarding", "sw"):
+        assert leaked not in flat
+    with pytest.raises(ValueError):
+        await reads.get_credit_score_history("2026-03-01", "2026-01-01")
+
+
+@pytest.mark.asyncio
+async def test_get_household_members_drops_avatars_and_flags_me(fake_client):
+    fake_client.responses["Common_GetHouseholdMembers"] = {
+        "me": {"id": "u2"},
+        "myHousehold": {
+            "id": "h",
+            "users": [
+                {"id": "u1", "name": "One", "displayName": "1", "householdRole": "member",
+                 "profilePictureUrl": "https://example.invalid/x", "avatarColor": "red"},
+                {"id": "u2", "name": "Two", "displayName": "2", "householdRole": "admin",
+                 "profilePictureUrl": None, "avatarColor": "blue"},
+            ],
+        },
+    }
+    result = await reads.get_household_members()
+    assert fake_client.calls == [("Common_GetHouseholdMembers", {})]
+    assert result == {
+        "members": [
+            {"id": "u1", "name": "One", "display_name": "1", "role": "member", "is_me": False},
+            {"id": "u2", "name": "Two", "display_name": "2", "role": "admin", "is_me": True},
+        ]
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_businesses_compact(fake_client):
+    fake_client.responses["Common_GetBusinessEntities"] = {
+        "businessEntities": [
+            {
+                "id": "b1", "name": "Acme LLC", "description": "side gig",
+                "logoUrl": "https://example.invalid/l", "color": "#fff", "notes": "private",
+                "structure": "llc", "createdAt": "x", "updatedAt": "y",
+                "accounts": [{"id": "a1", "logoUrl": "u", "displayName": "Biz Checking"}],
+                "accountsCount": 1, "transactionsCount": 42,
+            }
+        ]
+    }
+    result = await reads.get_businesses()
+    assert fake_client.calls == [("Common_GetBusinessEntities", {})]
+    assert result == {
+        "businesses": [
+            {
+                "id": "b1", "name": "Acme LLC", "description": "side gig", "structure": "llc",
+                "accounts": [{"id": "a1", "name": "Biz Checking"}],
+                "accounts_count": 1, "transactions_count": 42,
+            }
+        ]
+    }
+    fake_client.responses["Common_GetBusinessEntities"] = {"businessEntities": None}
+    assert await reads.get_businesses() == {"businesses": []}
+
+
+@pytest.mark.asyncio
+async def test_get_goals_compact(fake_client):
+    fake_client.responses["Common_SavingsGoalsWithThisMonthBalances"] = {
+        "savingsGoals": [
+            {
+                "id": "g1", "type": "savings", "name": "Trip", "createdAt": "c",
+                "archivedAt": None, "imageStorageProvider": "p", "imageStorageProviderId": "i",
+                "status": "on_track", "progress": 0.5, "currentBalance": 500.0,
+                "targetDate": "2027-01-01", "targetAmount": 1000.0,
+                "plannedMonthlyContribution": 100.0, "balanceThisMonth": 25.0,
+                "estimatedMonthsUntilCompletion": 5, "forecastedCompletionDate": "2027-01-01",
+                "isSinkingFund": False, "priority": 1, "spendingTotal": 0.0,
+                "allocationAmountsByAccount": [
+                    {"goalId": "g1", "totalAmount": 500.0,
+                     "account": {"displayName": "Savings", "logoUrl": "x"}},
+                ],
+            },
+            {"id": "g2", "name": "Old", "archivedAt": "2026-01-01"},
+        ],
+        "goalsBalanceThisMonth": 25.0,
+        "currentTotalBalanceForGoals": 500.0,
+    }
+    result = await reads.get_goals()
+    assert fake_client.calls == [("Common_SavingsGoalsWithThisMonthBalances", {})]
+    g1, g2 = result["goals"]
+    assert g1["name"] == "Trip" and g1["target_amount"] == 1000.0
+    assert g1["allocations"] == [{"account": "Savings", "amount": 500.0}]
+    assert g1["archived"] is False and g2["archived"] is True
+    assert "imageStorageProvider" not in g1 and "createdAt" not in g1
+    assert result["goals_balance_this_month"] == 25.0
+    assert result["current_total_balance_for_goals"] == 500.0

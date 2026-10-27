@@ -29,6 +29,7 @@ tool call should crash on.
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any
 
 
@@ -79,6 +80,144 @@ def merchants(
         "merchants": kept,
         "count": len(kept),
         "truncated": len(rows) >= limit,
+    }
+
+
+def _bucket_key(day: str, interval: str) -> str:
+    if interval == "day":
+        return day
+    d = date.fromisoformat(day)
+    if interval == "week":
+        iso = d.isocalendar()
+        return f"{iso[0]}-W{iso[1]:02d}"
+    return day[:7]  # month
+
+
+def net_worth_history(data: dict[str, Any], interval: str) -> dict[str, Any]:
+    """Compact `aggregateSnapshots[]` (date, balance, assetsBalance,
+    liabilitiesBalance) and downsample to `interval` ("day"/"week"/"month")
+    by keeping the LAST snapshot of each bucket (its end-of-period value).
+    `interval` must already be resolved (not "auto"); see
+    reads.get_net_worth_history. Output is oldest-first."""
+    snaps = sorted(
+        (s for s in data.get("aggregateSnapshots") or [] if s.get("date")),
+        key=lambda s: s["date"],
+    )
+    last: dict[str, dict[str, Any]] = {}
+    for s in snaps:
+        last[_bucket_key(s["date"], interval)] = s
+    points = [
+        {
+            "date": s["date"],
+            "net_worth": s.get("balance"),
+            "assets": s.get("assetsBalance"),
+            "liabilities": s.get("liabilitiesBalance"),
+        }
+        for s in last.values()
+    ]
+    return {"interval": interval, "points": points, "count": len(points)}
+
+
+def credit_score_history(
+    data: dict[str, Any], start_date: str, end_date: str
+) -> dict[str, Any]:
+    """ONLY date, score and the user's display name from
+    `creditScoreSnapshots[]`; everything else the op returns (spinwheelUser
+    onboarding/subscription ids and status, avatars, account-name emails) is
+    deliberately dropped. The op takes no date arguments, so start/end
+    (inclusive, 'YYYY-MM-DD') are applied here. User names are resolved
+    from myHousehold.users by the snapshot's user id."""
+    names: dict[str, Any] = {}
+    for u in (data.get("myHousehold") or {}).get("users") or []:
+        names[str(u.get("id"))] = u.get("displayName")
+    su = (data.get("spinwheelUser") or {}).get("user") or {}
+    if su.get("id") is not None:
+        names.setdefault(str(su["id"]), su.get("displayName"))
+    scores = []
+    for snap in data.get("creditScoreSnapshots") or []:
+        day = (snap.get("reportedDate") or "")[:10]
+        if not day or day < start_date or day > end_date:
+            continue
+        uid = (snap.get("user") or {}).get("id")
+        scores.append(
+            {"date": day, "score": snap.get("score"), "user": names.get(str(uid))}
+        )
+    scores.sort(key=lambda r: (r["date"], str(r["user"])))
+    return {"scores": scores, "count": len(scores)}
+
+
+def household_members(data: dict[str, Any]) -> dict[str, Any]:
+    """`myHousehold.users[]` without avatar fields, flagging the caller."""
+    me_id = (data.get("me") or {}).get("id")
+    members = [
+        {
+            "id": u.get("id"),
+            "name": u.get("name"),
+            "display_name": u.get("displayName"),
+            "role": u.get("householdRole"),
+            "is_me": me_id is not None and str(u.get("id")) == str(me_id),
+        }
+        for u in (data.get("myHousehold") or {}).get("users") or []
+    ]
+    return {"members": members}
+
+
+def businesses(data: dict[str, Any]) -> dict[str, Any]:
+    """`businessEntities[]` compacted: no logo/color/notes/timestamps."""
+    out = [
+        {
+            "id": b.get("id"),
+            "name": b.get("name"),
+            "description": b.get("description"),
+            "structure": b.get("structure"),
+            "accounts": [
+                {"id": a.get("id"), "name": a.get("displayName")}
+                for a in b.get("accounts") or []
+            ],
+            "accounts_count": b.get("accountsCount"),
+            "transactions_count": b.get("transactionsCount"),
+        }
+        for b in data.get("businessEntities") or []
+    ]
+    return {"businesses": out}
+
+
+def goals(data: dict[str, Any]) -> dict[str, Any]:
+    """`savingsGoals[]` (GoalSummaryFields) compacted to the figures a person
+    reads on the Goals page, plus each goal's per-account allocation and the
+    two household-level balances. Image/logo/icon fields are dropped."""
+    out = []
+    for g in data.get("savingsGoals") or []:
+        out.append(
+            {
+                "id": g.get("id"),
+                "name": g.get("name"),
+                "type": g.get("type"),
+                "status": g.get("status"),
+                "archived": g.get("archivedAt") is not None,
+                "progress": g.get("progress"),
+                "current_balance": g.get("currentBalance"),
+                "target_amount": g.get("targetAmount"),
+                "target_date": g.get("targetDate"),
+                "planned_monthly_contribution": g.get("plannedMonthlyContribution"),
+                "balance_this_month": g.get("balanceThisMonth"),
+                "forecasted_completion_date": g.get("forecastedCompletionDate"),
+                "estimated_months_until_completion": g.get("estimatedMonthsUntilCompletion"),
+                "is_sinking_fund": g.get("isSinkingFund"),
+                "priority": g.get("priority"),
+                "allocations": [
+                    {
+                        "account": (a.get("account") or {}).get("displayName"),
+                        "amount": a.get("totalAmount"),
+                    }
+                    for a in g.get("allocationAmountsByAccount") or []
+                ],
+            }
+        )
+    return {
+        "goals": out,
+        "goals_balance_this_month": data.get("goalsBalanceThisMonth"),
+        "current_total_balance_for_goals": data.get("currentTotalBalanceForGoals"),
     }
 
 

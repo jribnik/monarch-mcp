@@ -97,10 +97,10 @@ multi-kilobyte query changes by one field.
 
 ## Mutations
 
-43 operations are vendored: 28 mutations (backing the 30 write tools --
+48 operations are vendored: 28 mutations (backing the 30 write tools --
 `Web_TransactionDrawerUpdateTransaction` backs both `recategorize_transaction`
 and `update_transaction`, `Common_SplitTransactionMutation` backs both
-`split_transaction` and `unsplit_transaction`) and 15 queries (the read tools'
+`split_transaction` and `unsplit_transaction`) and 20 queries (the read tools'
 queries, `Common_PreviewTransactionRule` -- a QUERY grouped with the writes
 only because its purpose is dry-running a rule -- and the write tools' fresh
 pre-reads `Common_GetAccountForEdit`, `Common_GetMerchantForEdit`,

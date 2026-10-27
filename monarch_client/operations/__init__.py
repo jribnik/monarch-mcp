@@ -495,6 +495,75 @@ PROVENANCE: dict[str, dict] = {
             "on success here -- no unreliable-flag quirk to work around."
         ),
     },
+    "Common_GetAggregateSnapshots": {
+        "catalog_query_hash": "448cbf25ae3a6c08ba024732f263ad4b9291e52f28b06b8c65a103c2752f36ee",
+        "vendored_sha256": "29187ca4c4dfd5a13e3afaa7b8b2a4dd21dd02f1542f84e3d0da1d93a1b0a3c3",
+        "exported_at": "2026-10-27T17:56:47.156468+00:00",
+        "runs_seen": ["2026-10-25T14-30-00Z", "2026-10-26T14-30-00Z", "2026-10-27T14-30-00Z"],
+        "hand_repaired": False,
+        "note": (
+            "backs get_net_worth_history; variables {'filters': {startDate, "
+            "endDate, useAdaptiveGranularity: True}} (the intersection of "
+            "the two filter shapes observed in the nightly walk; one also "
+            "sent accountType: null, the other accountFilters: {}). With "
+            "adaptive granularity the server may already return coarser "
+            "points for long ranges; get_net_worth_history downsamples "
+            "further on our side. No string/numeric literals in the query "
+            "text, so no redaction repair was needed."
+        ),
+    },
+    "Common_GetSpinwheelCreditScoreSnapshots": {
+        "catalog_query_hash": "209306f7a55608597e8ad4ba7989d63d9959be4017e3971cfd22cc11ce2665f6",
+        "vendored_sha256": "a5350a6e600668ed64cd787e771cc0eacf4e745d5c3978e418d3b4068a65effc",
+        "exported_at": "2026-10-27T17:56:47.365747+00:00",
+        "runs_seen": ["2026-10-25T14-30-00Z", "2026-10-26T14-30-00Z", "2026-10-27T14-30-00Z"],
+        "hand_repaired": False,
+        "note": (
+            "backs get_credit_score_history; called with variables {}. The "
+            "query takes no date arguments, so start_date/end_date are "
+            "applied client-side. It also selects spinwheelUser "
+            "onboarding/subscription fields and household user "
+            "names/avatars; the projector keeps ONLY date, score and the "
+            "user's display name. No literals in the query text."
+        ),
+    },
+    "Common_GetHouseholdMembers": {
+        "catalog_query_hash": "ff8b29a2abb9066970595c8d206e03389ce5df4ae831ca92e77daf0898644aac",
+        "vendored_sha256": "dab845c4e35ed5f4b59cfe7fdf29dd320b2c96f4d0da70541dae190057a76ed8",
+        "exported_at": "2026-10-27T17:56:47.567777+00:00",
+        "runs_seen": ["2026-10-25T14-30-00Z", "2026-10-26T14-30-00Z", "2026-10-27T14-30-00Z"],
+        "hand_repaired": False,
+        "note": (
+            "backs get_household_members; called with variables {}. "
+            "Projector drops profilePictureUrl/avatarColor. No literals in "
+            "the query text."
+        ),
+    },
+    "Common_GetBusinessEntities": {
+        "catalog_query_hash": "1cca903006fb2b577525161754a90534bf598475ad736ed1207e60b34458bcf2",
+        "vendored_sha256": "84f1bf3f7ad3f7be111fe1c8cd6f6275fa19e7f06f34336b5a4325b43e7b6765",
+        "exported_at": "2026-10-27T17:56:47.759654+00:00",
+        "runs_seen": ["2026-10-25T14-30-00Z", "2026-10-26T14-30-00Z", "2026-10-27T14-30-00Z"],
+        "hand_repaired": False,
+        "note": (
+            "backs get_businesses; called with variables {}. Projector "
+            "drops logo/color/notes/timestamps. No literals in the query "
+            "text."
+        ),
+    },
+    "Common_SavingsGoalsWithThisMonthBalances": {
+        "catalog_query_hash": "ae870eba9991a8358302e283743672dd80d27c3ab41d6d20a124f63d0e6d81af",
+        "vendored_sha256": "9db0ab5aea1ff50735987d7122c89a08380f433ca7b492e19b963c6721115b9c",
+        "exported_at": "2026-10-27T17:56:47.949723+00:00",
+        "runs_seen": ["2026-10-25T14-30-00Z", "2026-10-26T14-30-00Z", "2026-10-27T14-30-00Z"],
+        "hand_repaired": False,
+        "note": (
+            "backs get_goals; called with variables {}. Projector keeps a "
+            "compact subset of GoalSummaryFields plus per-account "
+            "allocation totals and the two top-level balances. No literals "
+            "in the query text."
+        ),
+    },
 }
 
 _cache: dict[str, str] = {}
