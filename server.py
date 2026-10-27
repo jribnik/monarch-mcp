@@ -70,6 +70,9 @@ Writes and safety:
 - Every write tool is refused unless the server environment sets
   MONARCH_CLIENT_ENABLE_WRITES=1; if one reports writes are disabled, tell the
   user rather than retrying.
+- For the same change to many transactions use bulk_update_transactions: it
+  defaults to a dry run; show the user the diffs, then commit with
+  dry_run=False and confirm=str(would_affect_count).
 - Destructive tools (delete_*, mark_stream_as_not_recurring) take a required
   `confirm` that must echo a value from a fresh read of the target (its name;
   for delete_transaction "<merchant> <amount>"). Wide-blast flags
@@ -284,6 +287,46 @@ async def set_transaction_tags(
     """Set (replace) the tags on a transaction. Use get_tags for valid ids."""
     return await client_writes.set_transaction_tags(
         transaction_id=transaction_id, tag_ids=tag_ids
+    )
+
+
+@mcp.tool()
+async def bulk_update_transactions(
+    transaction_ids: list[str],
+    category_id: Optional[str] = None,
+    tag_ids: Optional[list[str]] = None,
+    hide_from_reports: Optional[bool] = None,
+    reviewed: Optional[bool] = None,
+    needs_review: Optional[bool] = None,
+    notes: Optional[str] = None,
+    dry_run: bool = True,
+    confirm: Optional[str] = None,
+) -> dict[str, Any]:
+    """
+    Apply the same changes to up to 50 transactions (ids from get_transactions).
+    Only pass the fields to change: category_id, tag_ids (REPLACES the tags),
+    hide_from_reports, reviewed=True ("Mark as reviewed") OR needs_review (not
+    both), notes.
+
+    dry_run=True (the default; works with writes disabled) freshly reads each
+    transaction and returns {would_affect_count, missing_ids, unchanged_ids,
+    diffs: [{id, merchant, amount, before, after}]} without changing anything.
+    Show the diffs to the user first. To commit, call again with dry_run=False
+    and confirm=str(would_affect_count) (recomputed from a fresh read; the
+    user must have approved that exact set). Failures are per transaction:
+    the commit continues and reports each one under results, so check
+    failed_count.
+    """
+    return await client_writes.bulk_update_transactions(
+        transaction_ids=transaction_ids,
+        category_id=category_id,
+        tag_ids=tag_ids,
+        hide_from_reports=hide_from_reports,
+        reviewed=reviewed,
+        needs_review=needs_review,
+        notes=notes,
+        dry_run=dry_run,
+        confirm=confirm,
     )
 
 

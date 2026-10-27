@@ -10,9 +10,10 @@ counterpart exactly, same as reads.py.
 This module: create_tag, delete_tag, preview_transaction_rule,
 create_transaction_rule, delete_transaction_rule, recategorize_transaction,
 update_transaction, set_transaction_tags, mark_stream_as_not_recurring,
-create_transaction, delete_transaction, create_manual_account -- 12
-functions, 11 write tools (preview_transaction_rule is a dry-run query and is
-counted with the reads). The rest of the 30 write tools live in
+create_transaction, delete_transaction, create_manual_account,
+bulk_update_transactions -- 13
+functions, 12 write tools (preview_transaction_rule is a dry-run query and is
+counted with the reads). The rest of the 31 write tools live in
 writes_categories.py (8), writes_accounts.py (8) and writes_splits_rules.py
 (3). See README.md for the full tool table and operations/__init__.py's
 PROVENANCE for each op's provenance.
@@ -689,3 +690,191 @@ async def mark_stream_as_not_recurring(stream_id: str, confirm: str) -> dict[str
     )
     data = await _call("Common_MarkAsNotRecurring", {"streamId": stream_id})
     return project.mark_stream_as_not_recurring_result(data)
+
+
+BULK_UPDATE_MAX_IDS = 50
+
+
+def _bulk_before(txn: dict[str, Any], tag_ids: Optional[list[str]]) -> dict[str, Any]:
+    """The pre-image of every field bulk_update_transactions can change."""
+    return {
+        "category_id": (txn.get("category") or {}).get("id"),
+        "category": (txn.get("category") or {}).get("name"),
+        "tag_ids": [t.get("id") for t in txn.get("tags") or []],
+        "hide_from_reports": txn.get("hideFromReports"),
+        "review_status": txn.get("reviewStatus"),
+        "needs_review": txn.get("needsReview"),
+        "notes": txn.get("notes") or "",
+    }
+
+
+async def _bulk_plan(
+    transaction_ids: list[str],
+    category_id: Optional[str],
+    tag_ids: Optional[list[str]],
+    hide_from_reports: Optional[bool],
+    reviewed: Optional[bool],
+    needs_review: Optional[bool],
+    notes: Optional[str],
+) -> dict[str, Any]:
+    """Fresh-read every id and work out, per transaction, which of the
+    requested fields would actually change. Sends no mutation."""
+    diffs: list[dict[str, Any]] = []
+    missing: list[str] = []
+    unchanged: list[str] = []
+    for tid in transaction_ids:
+        txn = (await reads.get_transaction_details(tid)).get("getTransaction")
+        if not txn:
+            missing.append(tid)
+            continue
+        cur = _bulk_before(txn, tag_ids)
+        before: dict[str, Any] = {}
+        after: dict[str, Any] = {}
+
+        def want(key: str, new: Any) -> None:
+            if cur[key] != new:
+                before[key] = cur[key]
+                after[key] = new
+
+        if category_id is not None:
+            want("category_id", category_id)
+        if tag_ids is not None:
+            if sorted(cur["tag_ids"]) != sorted(tag_ids):
+                before["tag_ids"] = cur["tag_ids"]
+                after["tag_ids"] = list(tag_ids)
+        if hide_from_reports is not None:
+            want("hide_from_reports", bool(hide_from_reports))
+        if reviewed is not None:
+            want("review_status", "reviewed")
+        if needs_review is not None:
+            want("needs_review", bool(needs_review))
+        if notes is not None:
+            want("notes", notes)
+        if not after:
+            unchanged.append(tid)
+            continue
+        diffs.append(
+            {
+                "id": tid,
+                "merchant": (txn.get("merchant") or {}).get("name"),
+                "amount": txn.get("amount"),
+                "before": before,
+                "after": after,
+            }
+        )
+    return {
+        "would_affect_count": len(diffs),
+        "missing_ids": missing,
+        "unchanged_ids": unchanged,
+        "diffs": diffs,
+    }
+
+
+async def bulk_update_transactions(
+    transaction_ids: list[str],
+    category_id: Optional[str] = None,
+    tag_ids: Optional[list[str]] = None,
+    hide_from_reports: Optional[bool] = None,
+    reviewed: Optional[bool] = None,
+    needs_review: Optional[bool] = None,
+    notes: Optional[str] = None,
+    dry_run: bool = True,
+    confirm: Optional[str] = None,
+) -> dict[str, Any]:
+    """Apply the same field changes to up to BULK_UPDATE_MAX_IDS transactions.
+
+    v1 loops the already-vendored single-transaction mutations (the update
+    mutation for category/hide/review/notes, setTags for tag_ids) -- there is
+    no new GraphQL op and no bulk mutation involved. dry_run (the DEFAULT)
+    freshly reads each transaction and returns {would_affect_count,
+    missing_ids, unchanged_ids, diffs}; it needs no write gate and sends no
+    mutation. A commit (dry_run=False) needs the write master switch AND
+    confirm == str(would_affect_count), recomputed from a fresh read inside
+    this call (transactions that already have the requested values are not
+    counted). The commit continues past per-transaction failures and reports
+    each one in `results`; it never raises away results already applied."""
+    ids = list(dict.fromkeys(transaction_ids or []))  # dedupe, keep order
+    if not ids:
+        raise ValueError("bulk_update_transactions: transaction_ids must not be empty")
+    if len(transaction_ids) > BULK_UPDATE_MAX_IDS:
+        raise ValueError(
+            f"bulk_update_transactions: {len(transaction_ids)} ids given, max is "
+            f"{BULK_UPDATE_MAX_IDS} -- split into smaller batches"
+        )
+    if all(
+        v is None
+        for v in (category_id, tag_ids, hide_from_reports, reviewed, needs_review, notes)
+    ):
+        raise ValueError(
+            "bulk_update_transactions: nothing to change -- pass at least one of "
+            "category_id, tag_ids, hide_from_reports, reviewed, needs_review, notes"
+        )
+    if reviewed is not None and needs_review is not None:
+        raise ValueError(
+            "bulk_update_transactions: pass reviewed=True OR needs_review, not both"
+        )
+    if reviewed is not None and reviewed is not True:
+        raise ValueError("bulk_update_transactions: reviewed only supports True")
+    if not dry_run:
+        _require_writes("bulk_update_transactions")
+
+    plan = await _bulk_plan(
+        ids, category_id, tag_ids, hide_from_reports, reviewed, needs_review, notes
+    )
+    if dry_run:
+        return {"dry_run": True, **plan}
+
+    count = plan["would_affect_count"]
+    _require_confirm(
+        "bulk_update_transactions", confirm, [str(count)],
+        f"the number of transactions that would change ({count}; "
+        f"missing {len(plan['missing_ids'])}, already-up-to-date "
+        f"{len(plan['unchanged_ids'])})",
+    )
+    if count == 0:
+        raise ValueError(
+            "bulk_update_transactions: nothing would change -- NOT proceeding"
+        )
+
+    results: list[dict[str, Any]] = []
+    for d in plan["diffs"]:
+        tid = d["id"]
+        applied: list[str] = []
+        try:
+            fields = d["after"]
+            if fields.keys() - {"tag_ids"}:
+                res = await _update_transaction(
+                    tid,
+                    category_id=category_id if "category_id" in fields else None,
+                    hide_from_reports=hide_from_reports if "hide_from_reports" in fields else None,
+                    reviewed=reviewed if "review_status" in fields else None,
+                    needs_review=needs_review if "needs_review" in fields else None,
+                    notes=notes if "notes" in fields else None,
+                )
+                errors = (res.get("updateTransaction") or {}).get("errors")
+                if errors:
+                    raise RuntimeError(f"update returned errors: {errors}")
+                applied.extend(k for k in fields if k != "tag_ids")
+            if "tag_ids" in fields:
+                res = await set_transaction_tags(tid, list(tag_ids or []))
+                errors = (res.get("setTransactionTags") or {}).get("errors")
+                if errors:
+                    raise RuntimeError(f"set tags returned errors: {errors}")
+                applied.append("tag_ids")
+            results.append({"id": tid, "ok": True, "applied": applied})
+        except Exception as e:  # report and continue; never lose applied results
+            results.append(
+                {"id": tid, "ok": False, "applied": applied,
+                 "error": f"{type(e).__name__}: {e}"}
+            )
+    failed = [r["id"] for r in results if not r["ok"]]
+    return {
+        "dry_run": False,
+        "would_affect_count": count,
+        "applied_count": len(results) - len(failed),
+        "failed_count": len(failed),
+        "failed_ids": failed,
+        "missing_ids": plan["missing_ids"],
+        "unchanged_ids": plan["unchanged_ids"],
+        "results": results,
+    }

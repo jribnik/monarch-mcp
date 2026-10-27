@@ -8,8 +8,8 @@ budgets, etc. Built to replace Monarch's own MCP server, which has been offline.
 Built entirely on [`monarch_client`](monarch_client/) — a self-contained client
 against Monarch's real GraphQL API, using plain HTTP + vendored query text
 captured from the real web app by [api-recon](https://github.com/jribnik/api-recon).
-**47 tools: 17 read-side (including the write-adjacent `preview_transaction_rule`
-dry-run) and 30 write**. The write tools were captured and verified live against a
+**48 tools: 17 read-side (including the write-adjacent `preview_transaction_rule`
+dry-run) and 31 write**. The write tools were captured and verified live against a
 dedicated, disposable `monarch-sandbox` Monarch account before ever touching the
 real one; **that account has since been deleted** (api-recon still registers a
 `monarch-sandbox` adapter site name, but no account sits behind it; see "Adding
@@ -107,7 +107,7 @@ claude mcp add monarch -- ~/src/monarch-mcp/.venv/bin/python ~/src/monarch-mcp/s
 
 Writes are **off by default**. To let the server change your account, set
 `MONARCH_CLIENT_ENABLE_WRITES=1` in the MCP server's environment (this makes
-all 30 write tools live at once, so see "Security" for the per-call confirm
+all 31 write tools live at once, so see "Security" for the per-call confirm
 gates on the destructive ones), e.g.:
 
 ```bash
@@ -141,6 +141,7 @@ Then restart Claude Code so it connects. Ask things like:
 | `recategorize_transaction` | **write** | set a transaction's category |
 | `update_transaction` | **write** | edit merchant/amount/date/notes/flags; `reviewed=True` = Mark as reviewed |
 | `set_transaction_tags` | **write** | replace a transaction's tags |
+| `bulk_update_transactions` | **write** | same change to up to 50 transactions (category, tags, hide, reviewed/needs_review, notes) by looping the single-transaction mutations; `dry_run` defaults to **True** (works with writes disabled) and returns per-transaction before/after diffs; committing needs `dry_run=False` and `confirm=str(would_affect_count)` from a fresh read; per-transaction results, failures don't abort the batch |
 | `create_tag` | **write** | create a new tag |
 | `delete_tag` | **write, destructive** | delete a tag; needs `confirm` = the tag's name |
 | `create_transaction_rule` | **write** | create an auto-categorization rule (incl. renaming merchants); `apply_to_existing_transactions=True` needs `confirm=str(count)` of a fresh preview |
@@ -163,7 +164,7 @@ Then restart Claude Code so it connects. Ask things like:
 
 - **Writes are gated, in layers.**
   1. *Master switch.* With `MONARCH_CLIENT_ENABLE_WRITES` unset (or anything
-     other than `1`), **all 30 write tools** raise `MonarchWriteBlocked` before
+     other than `1`), **all 31 write tools** raise `MonarchWriteBlocked` before
      sending anything. Reads and the dry-run `preview_transaction_rule` are
      unaffected. A second check inside `writes._call`, and a third in
      `MonarchClient.call`, refuses any vendored mutation while the gate is
@@ -276,7 +277,7 @@ touch the real `~/.monarch-mcp`. CI runs the same suite (`.github/workflows/test
 ## Layout
 
 ```
-server.py            FastMCP server (the 47 tools above, plus the workflow `instructions`
+server.py            FastMCP server (the 48 tools above, plus the workflow `instructions`
                      string sent to clients)
 monarch_client/      the client -- see monarch_client/__init__.py
   operations/        vendored GraphQL text + PROVENANCE (see its README.md)
