@@ -270,7 +270,8 @@ touch the real `~/.monarch-mcp`. CI runs the same suite (`.github/workflows/test
 ## Layout
 
 ```
-server.py            FastMCP server (the 41 tools above)
+server.py            FastMCP server (the 41 tools above, plus the workflow `instructions`
+                     string sent to clients)
 monarch_client/      the client -- see monarch_client/__init__.py
   operations/        vendored GraphQL text + PROVENANCE (see its README.md)
   tests/             hermetic pytest suite

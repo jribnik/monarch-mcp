@@ -49,7 +49,39 @@ from monarch_client import writes_accounts as client_writes_accounts
 from monarch_client import writes_categories as client_writes_categories
 from monarch_client import writes_splits_rules as client_writes_splits_rules
 
-mcp = FastMCP("monarch")
+INSTRUCTIONS = """\
+Monarch Money tools for reviewing and cleaning up one household's accounts.
+
+Workflow:
+- Read tools return IDs (transaction, category, tag, account, merchant, rule).
+  Find the ID with a read tool first (get_transactions, get_categories,
+  get_tags, list_accounts, get_transaction_rules), then pass it to a write tool.
+  Write tools take IDs, not names, except where a parameter says otherwise.
+- Amounts are signed: negative = expense/debit, positive = income/credit.
+- Lists are paged: use offset/limit (get_transactions defaults to 100) and keep
+  paging until a page comes back short.
+- Preview before committing: call preview_transaction_rule (a dry run) to see
+  what a rule would match before create_transaction_rule or
+  update_transaction_rule, especially with apply_to_existing_transactions=True.
+
+Writes and safety:
+- Every write tool is refused unless the server environment sets
+  MONARCH_CLIENT_ENABLE_WRITES=1; if one reports writes are disabled, tell the
+  user rather than retrying.
+- Destructive tools (delete_*, mark_stream_as_not_recurring) take a required
+  `confirm` that must echo a value from a fresh read of the target (its name;
+  for delete_transaction "<merchant> <amount>"). Wide-blast flags
+  (apply_to_future=True on the budget tools, apply_to_existing_transactions=True
+  on the rule tools) need `confirm` too. Confirm the specific target with the
+  user first; a wrong confirm is refused and the error names the expected value,
+  but only retry with it once the user has approved that target.
+- To merge duplicate merchants (e.g. recurring-stream dupes after a bank
+  re-link), do not rename the merchant: update_merchant cannot rename onto an
+  existing merchant. Rename the transactions to the canonical merchant name with
+  update_transaction instead.
+"""
+
+mcp = FastMCP("monarch", instructions=INSTRUCTIONS)
 
 
 # --------------------------------------------------------------------------- #
