@@ -1,5 +1,5 @@
 """
-The 11 read-side MCP tools defined in this module (12 read-side tools at the
+The 16 read-side MCP tools defined in this module (17 read-side tools at the
 tool level: the README table also counts preview_transaction_rule, a dry-run
 that lives in writes.py), built on monarch_client; the legacy
 monarchmoney-enhanced backend they once ran alongside is gone.
@@ -197,3 +197,74 @@ async def get_merchants(
     data = await _call("Common_SearchMerchantsByName", variables)
     return project.merchants(data, limit=limit, include_zero_txn=include_zero_txn,
                              offset=offset)
+
+
+_INTERVALS = ("auto", "day", "week", "month")
+
+
+def _parse_day(value: str, what: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{what}={value!r} must be 'YYYY-MM-DD'") from None
+
+
+async def get_net_worth_history(
+    start_date: str, end_date: Optional[str] = None, interval: str = "auto"
+) -> dict[str, Any]:
+    """Common_GetAggregateSnapshots, downsampled client-side. auto = day for
+    spans <= 60 days, week for <= 1 year, else month. end_date defaults to
+    today. The request's endDate is sent ONLY when end_date is given and is not
+    today (the web app always sends null; a concrete endDate was never
+    observed), otherwise null. The server's adaptive granularity
+    (useAdaptiveGranularity) may return coarser points than `interval` for
+    long ranges, so "day" over a long span can still come back coarser; each
+    returned point is labelled with its own snapshot date, not a bucket
+    boundary."""
+    if interval not in _INTERVALS:
+        raise ValueError(f"interval={interval!r} must be one of {list(_INTERVALS)}")
+    start = _parse_day(start_date, "start_date")
+    end = _parse_day(end_date, "end_date") if end_date else date.today()
+    if end < start:
+        raise ValueError("end_date must not be before start_date")
+    if interval == "auto":
+        span = (end - start).days
+        interval = "day" if span <= 60 else "week" if span <= 366 else "month"
+    data = await _call(
+        "Common_GetAggregateSnapshots",
+        {
+            "filters": {
+                "startDate": start.isoformat(),
+                "endDate": (
+                    end.isoformat() if end_date and end != date.today() else None
+                ),
+                "useAdaptiveGranularity": True,
+            }
+        },
+    )
+    return project.net_worth_history(data, interval)
+
+
+async def get_credit_score_history(start_date: str, end_date: str) -> dict[str, Any]:
+    start = _parse_day(start_date, "start_date")
+    end = _parse_day(end_date, "end_date")
+    if end < start:
+        raise ValueError("end_date must not be before start_date")
+    data = await _call("Common_GetSpinwheelCreditScoreSnapshots", {})
+    return project.credit_score_history(data, start.isoformat(), end.isoformat())
+
+
+async def get_household_members() -> dict[str, Any]:
+    data = await _call("Common_GetHouseholdMembers", {})
+    return project.household_members(data)
+
+
+async def get_businesses() -> dict[str, Any]:
+    data = await _call("Common_GetBusinessEntities", {})
+    return project.businesses(data)
+
+
+async def get_goals(include_archived: bool = False) -> dict[str, Any]:
+    """Savings goals; archived goals are excluded unless include_archived."""
+    data = await _call("Common_SavingsGoalsWithThisMonthBalances", {})
+    return project.goals(data, include_archived=include_archived)

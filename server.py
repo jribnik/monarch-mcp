@@ -294,6 +294,58 @@ async def get_merchants(
 
 
 @mcp.tool()
+async def get_net_worth_history(
+    start_date: str, end_date: Optional[str] = None, interval: str = "auto"
+) -> dict[str, Any]:
+    """
+    Net worth over time (net_worth, assets, liabilities per point). Dates are
+    'YYYY-MM-DD'; end_date defaults to today. interval is "auto", "day", "week"
+    or "month" and downsamples to the last value of each period; auto = day for
+    spans <= 60 days, week for <= 1 year, else month. The server's adaptive
+    granularity may return coarser points than `interval` on long ranges; each
+    point is labelled with its own snapshot date (not a bucket boundary). Totals
+    only, no per-account breakdown.
+    """
+    return await client_reads.get_net_worth_history(
+        start_date=start_date, end_date=end_date, interval=interval
+    )
+
+
+@mcp.tool()
+async def get_credit_score_history(start_date: str, end_date: str) -> dict[str, Any]:
+    """
+    Credit score snapshots between start_date and end_date ('YYYY-MM-DD',
+    inclusive): date, score and the household member's display name only.
+    """
+    return await client_reads.get_credit_score_history(
+        start_date=start_date, end_date=end_date
+    )
+
+
+@mcp.tool()
+async def get_household_members() -> dict[str, Any]:
+    """List household members (id, name, display_name, role, is_me)."""
+    return await client_reads.get_household_members()
+
+
+@mcp.tool()
+async def get_businesses() -> dict[str, Any]:
+    """List business entities (id, name, description, structure, linked accounts,
+    account and transaction counts)."""
+    return await client_reads.get_businesses()
+
+
+@mcp.tool()
+async def get_goals(include_archived: bool = False) -> dict[str, Any]:
+    """
+    List savings goals (balance, target, progress, monthly contribution,
+    forecast, per-account allocation) plus this month's total goal balance.
+    Archived goals are excluded unless include_archived=True.
+    """
+    return await client_reads.get_goals(include_archived=include_archived)
+
+
+@mcp.tool()
 async def get_transaction_rules() -> dict[str, Any]:
     """
     List all transaction rules (auto-categorization rules), in priority order.
