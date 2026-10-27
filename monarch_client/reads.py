@@ -214,9 +214,13 @@ async def get_net_worth_history(
 ) -> dict[str, Any]:
     """Common_GetAggregateSnapshots, downsampled client-side. auto = day for
     spans <= 60 days, week for <= 1 year, else month. end_date defaults to
-    today. The server's own adaptive granularity may already return coarser
-    points for long ranges, so "day" over a long span can still come back
-    coarser."""
+    today. The request's endDate is sent ONLY when end_date is given and is not
+    today (the web app always sends null; a concrete endDate was never
+    observed), otherwise null. The server's adaptive granularity
+    (useAdaptiveGranularity) may return coarser points than `interval` for
+    long ranges, so "day" over a long span can still come back coarser; each
+    returned point is labelled with its own snapshot date, not a bucket
+    boundary."""
     if interval not in _INTERVALS:
         raise ValueError(f"interval={interval!r} must be one of {list(_INTERVALS)}")
     start = _parse_day(start_date, "start_date")
@@ -231,7 +235,9 @@ async def get_net_worth_history(
         {
             "filters": {
                 "startDate": start.isoformat(),
-                "endDate": end.isoformat(),
+                "endDate": (
+                    end.isoformat() if end_date and end != date.today() else None
+                ),
                 "useAdaptiveGranularity": True,
             }
         },
@@ -258,6 +264,7 @@ async def get_businesses() -> dict[str, Any]:
     return project.businesses(data)
 
 
-async def get_goals() -> dict[str, Any]:
+async def get_goals(include_archived: bool = False) -> dict[str, Any]:
+    """Savings goals; archived goals are excluded unless include_archived."""
     data = await _call("Common_SavingsGoalsWithThisMonthBalances", {})
-    return project.goals(data)
+    return project.goals(data, include_archived=include_archived)

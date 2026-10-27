@@ -103,7 +103,8 @@ def net_worth_history(data: dict[str, Any], interval: str) -> dict[str, Any]:
     liabilitiesBalance) and downsample to `interval` ("day"/"week"/"month")
     by keeping the LAST snapshot of each bucket (its end-of-period value).
     `interval` must already be resolved (not "auto"); see
-    reads.get_net_worth_history. Output is oldest-first."""
+    reads.get_net_worth_history. Output is oldest-first; each point carries
+    the date of its own (last) snapshot in the bucket, not the bucket edge."""
     snaps = sorted(
         (s for s in data.get("aggregateSnapshots") or [] if s.get("date")),
         key=lambda s: s["date"],
@@ -187,12 +188,15 @@ def businesses(data: dict[str, Any]) -> dict[str, Any]:
     return {"businesses": out}
 
 
-def goals(data: dict[str, Any]) -> dict[str, Any]:
+def goals(data: dict[str, Any], include_archived: bool = False) -> dict[str, Any]:
     """`savingsGoals[]` (GoalSummaryFields) compacted to the figures a person
     reads on the Goals page, plus each goal's per-account allocation and the
-    two household-level balances. Image/logo/icon fields are dropped."""
+    two household-level balances. Image/logo/icon fields are dropped.
+    Archived goals (archivedAt set) are skipped unless include_archived."""
     out = []
     for g in data.get("savingsGoals") or []:
+        if g.get("archivedAt") is not None and not include_archived:
+            continue
         out.append(
             {
                 "id": g.get("id"),

@@ -382,8 +382,12 @@ async def test_net_worth_explicit_interval_default_end_and_validation(fake_clien
     monkeypatch.setattr(reads, "date", _FixedDate)
     fake_client.responses["Common_GetAggregateSnapshots"] = {"aggregateSnapshots": None}
     result = await reads.get_net_worth_history("2026-03-01", interval="month")
-    assert fake_client.calls[0][1]["filters"]["endDate"] == "2026-03-15"
+    # defaulted end_date -> endDate is null (what the app sends)
+    assert fake_client.calls[0][1]["filters"]["endDate"] is None
     assert result == {"interval": "month", "points": [], "count": 0}
+    # explicit end_date equal to today -> also null
+    await reads.get_net_worth_history("2026-03-01", "2026-03-15")
+    assert fake_client.calls[1][1]["filters"]["endDate"] is None
     for kwargs in (
         {"start_date": "03/01/2026"},
         {"start_date": "2026-03-01", "interval": "hour"},
@@ -510,8 +514,10 @@ async def test_get_goals_compact(fake_client):
         "goalsBalanceThisMonth": 25.0,
         "currentTotalBalanceForGoals": 500.0,
     }
-    result = await reads.get_goals()
+    default = await reads.get_goals()
     assert fake_client.calls == [("Common_SavingsGoalsWithThisMonthBalances", {})]
+    assert [g["id"] for g in default["goals"]] == ["g1"]
+    result = await reads.get_goals(include_archived=True)
     g1, g2 = result["goals"]
     assert g1["name"] == "Trip" and g1["target_amount"] == 1000.0
     assert g1["allocations"] == [{"account": "Savings", "amount": 500.0}]
