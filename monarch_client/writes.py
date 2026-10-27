@@ -132,7 +132,7 @@ async def _verify_merchant_name_exists(name: str) -> None:
     "genuinely not found" apart from "search was truncated, can't confirm
     either way" and saying so explicitly in the latter case instead of
     implying the name search was exhaustive."""
-    found = await reads.get_transactions(search=name, limit=100)
+    found = await reads.fetch_transactions_raw(search=name, limit=100)
     all_transactions = found.get("allTransactions") or {}
     results = all_transactions.get("results") or []
     total_count = all_transactions.get("totalCount") or 0

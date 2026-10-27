@@ -49,9 +49,32 @@ def _current_month_bounds(today: date) -> tuple[str, str]:
     return today.replace(day=1).isoformat(), today.replace(day=days_in_month).isoformat()
 
 
-async def list_accounts() -> dict[str, Any]:
+_DETAILS = ("compact", "full")
+
+
+def _check_detail(detail: str) -> None:
+    if detail not in _DETAILS:
+        raise ValueError(f"detail={detail!r} must be one of {list(_DETAILS)}")
+
+
+async def list_accounts(
+    include_hidden: bool = False,
+    account_types: Optional[list[str]] = None,
+    detail: str = "compact",
+) -> dict[str, Any]:
+    """detail="full" is the raw flattened account list (every account, the
+    other two parameters ignored) -- the shape this tool had before compact
+    became the default. detail="compact" returns slim rows plus asset /
+    liability / net-worth totals; hidden accounts are dropped unless
+    include_hidden, and account_types (type names, case-insensitive, e.g.
+    "depository") restricts the rows AND the totals."""
+    _check_detail(detail)
     data = await _call("Web_GetAccountsPage", {"filters": {}})
-    return project.accounts(data)
+    if detail == "full":
+        return project.accounts(data)
+    return project.accounts_compact(
+        data, include_hidden=include_hidden, account_types=account_types
+    )
 
 
 async def get_categories() -> dict[str, Any]:
@@ -93,7 +116,18 @@ async def get_cashflow_summary() -> dict[str, Any]:
     return project.cashflow_summary(data)
 
 
-async def get_transactions(
+# Largest page of detail="full" rows (the raw shape is ~1.5K chars a row).
+FULL_DETAIL_MAX_LIMIT = 25
+COMPACT_MAX_LIMIT = 200
+# visibility -> transactionVisibility. The app sends transactionVisibility on
+# EVERY call and only 'non_hidden_transactions_only' has ever been observed.
+# Omitting the key might silently equal "visible", and a hidden/all value has
+# never been captured, so anything but "visible" is refused rather than guessed.
+_VISIBILITY = {"visible": "non_hidden_transactions_only"}
+_ORDER_BY = ("date",)  # the only TransactionOrdering value confirmed
+
+
+async def fetch_transactions_raw(
     limit: int = 100,
     offset: int = 0,
     start_date: Optional[str] = None,
@@ -102,20 +136,42 @@ async def get_transactions(
     category_ids: Optional[list[str]] = None,
     account_ids: Optional[list[str]] = None,
     tag_ids: Optional[list[str]] = None,
+    merchant_ids: Optional[list[str]] = None,
     has_notes: Optional[bool] = None,
     is_split: Optional[bool] = None,
+    credits_only: Optional[bool] = None,
+    visibility: str = "visible",
+    order_by: str = "date",
 ) -> dict[str, Any]:
+    """Raw, unbudgeted Web_GetTransactionsList projection (the shape
+    get_transactions had before compact output). Internal callers that need
+    raw rows (e.g. the merchant-name safety check in writes.py) use this; the
+    public tool is get_transactions."""
+    if visibility in ("all", "hidden"):
+        raise ValueError(
+            f"visibility={visibility!r} is not yet supported -- needs a captured "
+            "app request (api-recon): only the 'non_hidden_transactions_only' "
+            "value of Monarch's transactionVisibility filter has been observed"
+        )
+    if visibility not in _VISIBILITY:
+        raise ValueError(f"visibility={visibility!r} must be 'visible'")
+    if order_by not in _ORDER_BY:
+        raise ValueError(f"order_by={order_by!r} must be one of {list(_ORDER_BY)}")
     filters: dict[str, Any] = {
         "search": search,
         "categories": category_ids or [],
         "accounts": account_ids or [],
         "tags": tag_ids or [],
-        "transactionVisibility": "non_hidden_transactions_only",
+        "transactionVisibility": _VISIBILITY[visibility],
     }
+    if merchant_ids:
+        filters["merchants"] = merchant_ids
     if has_notes is not None:
         filters["hasNotes"] = has_notes
     if is_split is not None:
         filters["isSplit"] = is_split
+    if credits_only:  # only ever sent as True; False/None omit the key
+        filters["creditsOnly"] = True
     if start_date and end_date:
         filters["startDate"] = start_date
         filters["endDate"] = end_date
@@ -124,9 +180,62 @@ async def get_transactions(
 
     data = await _call(
         "Web_GetTransactionsList",
-        {"offset": offset, "limit": limit, "orderBy": "date", "filters": filters},
+        {"offset": offset, "limit": limit, "orderBy": order_by, "filters": filters},
     )
     return project.transactions(data)
+
+
+async def get_transactions(
+    limit: int = 50,
+    offset: int = 0,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    search: str = "",
+    category_ids: Optional[list[str]] = None,
+    account_ids: Optional[list[str]] = None,
+    tag_ids: Optional[list[str]] = None,
+    merchant_ids: Optional[list[str]] = None,
+    has_notes: Optional[bool] = None,
+    is_split: Optional[bool] = None,
+    credits_only: Optional[bool] = None,
+    visibility: str = "visible",
+    order_by: str = "date",
+    detail: str = "compact",
+    total_count_only: bool = False,
+) -> dict[str, Any]:
+    """Compact by default (project.transactions_compact); detail="full"
+    returns the raw projection plus truncated/next_offset envelope fields and
+    RAISES if limit > FULL_DETAIL_MAX_LIMIT (no silent clamping). Compact
+    limit may be at most COMPACT_MAX_LIMIT (also an error above, not clamped).
+    Every page is trimmed to project.TRANSACTIONS_BUDGET_CHARS serialized
+    characters; trimming sets truncated and next_offset. total_count_only
+    fetches one row and returns just {total_count}. `merchant_ids` maps to
+    filters.merchants, which is UNVERIFIED against a live call."""
+    _check_detail(detail)
+    if limit < 1:
+        raise ValueError("limit must be >= 1")
+    if offset < 0:
+        raise ValueError("offset must be >= 0")
+    cap = FULL_DETAIL_MAX_LIMIT if detail == "full" else COMPACT_MAX_LIMIT
+    if limit > cap and not total_count_only:
+        hint = (
+            f"use detail='compact' or limit<={cap}" if detail == "full"
+            else f"use limit<={cap} and page with next_offset"
+        )
+        raise ValueError(f"limit={limit} exceeds the maximum {cap} for detail={detail!r}; {hint}")
+    limit = 1 if total_count_only else limit
+    raw = await fetch_transactions_raw(
+        limit=limit, offset=offset, start_date=start_date, end_date=end_date,
+        search=search, category_ids=category_ids, account_ids=account_ids,
+        tag_ids=tag_ids, merchant_ids=merchant_ids, has_notes=has_notes,
+        is_split=is_split, credits_only=credits_only, visibility=visibility,
+        order_by=order_by,
+    )
+    if total_count_only:
+        return {"total_count": (raw.get("allTransactions") or {}).get("totalCount")}
+    if detail == "full":
+        return project.transactions_full(raw, offset=offset, limit=limit)
+    return project.transactions_compact(raw, offset=offset, limit=limit)
 
 
 async def get_transaction_details(transaction_id: str) -> dict[str, Any]:

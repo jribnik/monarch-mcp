@@ -29,6 +29,7 @@ tool call should crash on.
 
 from __future__ import annotations
 
+import json
 from datetime import date
 from typing import Any
 
@@ -40,6 +41,71 @@ def accounts(data: dict[str, Any]) -> dict[str, Any]:
     for summary in data.get("accountTypeSummaries") or []:
         flat.extend(summary.get("accounts") or [])
     return {"accounts": flat}
+
+
+def _money(value: Any) -> float:
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0.0
+
+
+def accounts_compact(
+    data: dict[str, Any],
+    include_hidden: bool = False,
+    account_types: list[str] | None = None,
+) -> dict[str, Any]:
+    """Slim account rows plus totals. Rows come from the same flattening as
+    `accounts`; hidden accounts are dropped unless include_hidden and
+    `account_types` (matched case-insensitively against `type.name`)
+    restricts both rows and totals.
+
+    Totals sum `signedBalance` over the returned rows whose
+    `includeInNetWorth` flag is set (the account-level "Include in net worth"
+    setting; the list op also selects `includeBalanceInNetWorth`, whose
+    meaning is unverified, so it is NOT used). assets = isAsset rows;
+    liabilities = -(sum of signedBalance over the others), so a credit-balance
+    card (positive signedBalance on a liability) REDUCES liabilities;
+    net_worth = assets - liabilities. Because totals cover the returned rows,
+    hidden accounts count only with include_hidden, and account_types narrows
+    them. `has_credential` is a HEURISTIC: True when the account has a linked
+    institution credential (so it syncs); False for manual accounts (the list
+    op does not select isManual, so this is inferred, not authoritative)."""
+    wanted = {t.lower() for t in account_types or []}
+    rows: list[dict[str, Any]] = []
+    assets = liabilities = 0.0
+    for a in accounts(data)["accounts"]:
+        if a.get("isHidden") and not include_hidden:
+            continue
+        type_name = (a.get("type") or {}).get("name")
+        if wanted and (type_name or "").lower() not in wanted:
+            continue
+        cred_inst = ((a.get("credential") or {}).get("institution") or {}).get("name")
+        rows.append(
+            {
+                "id": a.get("id"),
+                "name": a.get("displayName"),
+                "type": type_name,
+                "subtype": (a.get("subtype") or {}).get("display"),
+                "balance": a.get("signedBalance"),
+                "institution": (a.get("institution") or {}).get("name") or cred_inst,
+                "has_credential": bool(a.get("credential")),
+                "include_in_net_worth": a.get("includeInNetWorth"),
+                "is_hidden": a.get("isHidden"),
+                "updated_at": a.get("updatedAt"),
+            }
+        )
+        if a.get("includeInNetWorth"):
+            if a.get("isAsset"):
+                assets += _money(a.get("signedBalance"))
+            else:
+                liabilities -= _money(a.get("signedBalance"))
+    return {
+        "accounts": rows,
+        "count": len(rows),
+        "totals": {
+            "assets": round(assets, 2),
+            "liabilities": round(liabilities, 2),
+            "net_worth": round(assets - liabilities, 2),
+        },
+    }
 
 
 def categories(data: dict[str, Any]) -> dict[str, Any]:
@@ -253,6 +319,152 @@ def transactions(data: dict[str, Any]) -> dict[str, Any]:
         "allTransactions": data.get("allTransactions") or {},
         "transactionRules": data.get("transactionRules") or [],
     }
+
+
+# Serialized-size ceiling (len(json.dumps(result))) for one get_transactions
+# page, so a single call can't flood the model's context.
+TRANSACTIONS_BUDGET_CHARS = 40_000
+
+
+STATEMENT_MAX_CHARS = 60
+NOTES_MAX_CHARS = 80
+
+
+def _clip(value: Any, limit: int) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    value = value.strip()
+    return value if len(value) <= limit else value[: limit - 1] + "\u2026"
+
+
+def transaction_compact_row(t: dict[str, Any]) -> dict[str, Any]:
+    """One transaction from `allTransactions.results[]` reduced to the fields
+    a review/cleanup pass needs (no logos, goals, attachments, recurrence
+    groups ...). `original_statement` is the raw plaidName (<= 60 chars) and
+    `notes` the transaction notes (<= 80 chars, None when blank): validators
+    often find the real merchant/sender only there, since `merchant` can be
+    confidently wrong. Use get_transaction_details for full-length values."""
+    merchant = t.get("merchant") or {}
+    category = t.get("category") or {}
+    account = t.get("account") or {}
+    return {
+        "id": t.get("id"),
+        "date": t.get("date"),
+        "amount": t.get("amount"),
+        "pending": t.get("pending"),
+        "merchant": merchant.get("name"),
+        "merchant_id": merchant.get("id"),
+        "original_statement": _clip(t.get("plaidName"), STATEMENT_MAX_CHARS),
+        "notes": _clip(t.get("notes"), NOTES_MAX_CHARS),
+        "category": category.get("name"),
+        "category_id": category.get("id"),
+        "account": account.get("displayName"),
+        "account_id": account.get("id"),
+        "review_status": t.get("reviewStatus"),
+        "needs_review": t.get("needsReview"),
+        "hide_from_reports": t.get("hideFromReports"),
+        "is_split": t.get("isSplitTransaction"),
+        "tag_ids": [x.get("id") for x in t.get("tags") or []],
+    }
+
+
+def _size(obj: Any) -> int:
+    return len(json.dumps(obj))
+
+
+def _next_offset(
+    offset: int, returned: int, total: Any, limit: int | None = None
+) -> int | None:
+    """Offset of the next page, or None when no rows remain. With a known
+    total this is exact; without one, a short page (returned < limit) means
+    the end."""
+    nxt = offset + returned
+    if not returned:
+        return None
+    if isinstance(total, int):
+        return None if nxt >= total else nxt
+    if limit is not None and returned < limit:
+        return None
+    return nxt
+
+
+def transactions_compact(
+    data: dict[str, Any],
+    offset: int,
+    budget: int = TRANSACTIONS_BUDGET_CHARS,
+    limit: int | None = None,
+) -> dict[str, Any]:
+    """Envelope `{transactions, total_count, returned, offset, next_offset,
+    truncated}`. Rows are trimmed from the end until the serialized envelope
+    fits `budget`; trimming sets `truncated` and next_offset resumes right
+    after the last kept row. next_offset is non-null whenever more rows
+    exist (None only on the last page). If even the first row alone does not
+    fit `budget`, raises instead of returning an empty page (which would loop
+    a pager forever)."""
+    block = data.get("allTransactions") or {}
+    total = block.get("totalCount")
+    rows = [transaction_compact_row(t) for t in block.get("results") or []]
+    fetched = len(rows)
+
+    def build() -> dict[str, Any]:
+        return {
+            "transactions": rows,
+            "total_count": total,
+            "returned": len(rows),
+            "offset": offset,
+            "next_offset": _next_offset(offset, len(rows), total, limit),
+            "truncated": len(rows) < fetched,
+        }
+
+    out = build()
+    while rows and _size(out) > budget:
+        rows.pop()
+        out = build()
+    if fetched and not rows:
+        raise ValueError(
+            "a single transaction row exceeds the output size budget "
+            f"({budget} chars); cannot page past it"
+        )
+    if len(rows) < fetched:
+        # trimmed rows were fetched but not returned: resume right after the last kept row
+        out["next_offset"] = offset + len(rows)
+    return out
+
+
+def transactions_full(
+    data: dict[str, Any],
+    offset: int,
+    budget: int = TRANSACTIONS_BUDGET_CHARS,
+    limit: int | None = None,
+) -> dict[str, Any]:
+    """The raw `transactions` shape plus envelope fields `truncated` (rows
+    were trimmed to fit `budget`) and `next_offset` (non-null whenever more
+    rows exist), ALWAYS present. NOT byte-compatible with the pre-compact
+    shape (which had neither). Over budget, rows are trimmed from the end and
+    next_offset resumes after the last kept row."""
+    out = transactions(data)
+    block = out["allTransactions"]
+    rows = list(block.get("results") or [])
+    total = block.get("totalCount")
+    fetched = len(rows)
+    out = {
+        **out,
+        "allTransactions": {**block, "results": rows},
+        "truncated": False,
+        "next_offset": None,
+    }
+    while rows and _size(out) > budget:
+        rows.pop()
+    if fetched and not rows:
+        raise ValueError(
+            "a single transaction exceeds the output size budget; use detail='compact'"
+        )
+    out["truncated"] = len(rows) < fetched
+    out["next_offset"] = (
+        offset + len(rows) if out["truncated"]
+        else _next_offset(offset, len(rows), total, limit)
+    )
+    return out
 
 
 def transaction_details(data: dict[str, Any]) -> dict[str, Any]:

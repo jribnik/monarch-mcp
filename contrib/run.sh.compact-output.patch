@@ -1,0 +1,39 @@
+--- a/run.sh
++++ b/run.sh
+@@ -24,14 +24,23 @@
+    start_date = __SINCE__ (a FIXED lookback, NOT the last-validated date — transactions
+    can post a day or more after their "date", so a window that only moves forward from the
+    checkpoint would permanently skip late-posting ones), end_date = today. Page as needed.
+-   get_transactions payloads can be large and may be written to a file — if so, query
+-   that file with jq via Bash instead of reading it inline.
++   get_transactions now returns COMPACT rows by default, in an envelope
++   {transactions, total_count, returned, offset, next_offset, truncated}; keep paging
++   (offset=next_offset, limit up to 200) until next_offset is null. Row fields (snake_case):
++   id, date, amount, pending, merchant, merchant_id, original_statement (the raw plaidName,
++   up to 60 chars), notes (up to 80 chars), category, category_id, account, account_id,
++   review_status, needs_review, hide_from_reports, is_split, tag_ids. Hidden transactions
++   are excluded by default (same as before). If a payload is written to a file, query it
++   with jq via Bash, e.g. jq '.transactions[] | {id,date,merchant,original_statement,amount,category}'.
+    Cross-reference each transaction against the checkpoint file's run notes: skip
+    re-analyzing ones already validated in a prior run (unless something looks newly
+    wrong), and treat the rest as new.
+ 
+-3. Validate EACH transaction using its RAW data — compare plaidName / merchant / amount
+-   against the assigned category:
++3. Validate EACH transaction — compare original_statement (the raw plaidName, ALWAYS
++   present in every row) / merchant / notes / amount against the assigned category. The
++   merchant field is often confidently wrong, so lean on original_statement. Only call
++   mcp__monarch__get_transaction_details(transaction_id) when you need MORE than the row
++   shows (full-length statement or notes, splits, attachments):
+      - If clearly miscategorized, fix it via mcp__monarch__update_transaction
+        (category ids from mcp__monarch__get_categories) and set needs_review=false.
+      - $0 brokerage artifacts (stock splits, money-market sweeps) -> category Transfer
+@@ -49,7 +58,7 @@
+        toward the entry's total) and the timing is plausible (arrived after the fronted
+        purchase's date, within a few weeks), categorize it to the watch-list entry's
+        target category instead of the default "Miscellaneous peer payment, purpose
+-       unknowable" convention. Note the merchant/sender if the raw data shows one.
++       unknowable" convention. Note the merchant/sender if original_statement or notes show one.
+      - Track how much of the entry's total has been matched so far. Once an entry is
+        fully matched (or reasonably close, since people rarely chip in the exact
+        fractional amount), mark it resolved in the checkpoint file (move it out of the
