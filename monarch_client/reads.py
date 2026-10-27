@@ -177,19 +177,26 @@ async def get_account_type_options() -> dict[str, Any]:
 
 
 async def get_merchants(
-    search: Optional[str] = None, limit: int = 100, include_zero_txn: bool = False
+    search: Optional[str] = None,
+    limit: int = 100,
+    include_zero_txn: bool = False,
+    offset: int = 0,
 ) -> dict[str, Any]:
     """Promotes the hand-written Common_SearchMerchantsByName (previously only
     update_merchant's duplicate-name pre-check) to a public read. `search` is
-    a substring match on the merchant name; None/"" lists merchants. No
-    offset is exposed, so `truncated` in the result means "narrow the search"."""
+    a substring match on the merchant name; None/"" lists merchants (order is
+    server-defined without `search`). Page with `offset`; when
+    `more_may_exist` the result carries `next_offset`."""
     if limit < 1:
         raise ValueError("limit must be >= 1")
-    variables: dict[str, Any] = {"limit": limit, "offset": 0}
+    if offset < 0:
+        raise ValueError("offset must be >= 0")
+    variables: dict[str, Any] = {"limit": limit, "offset": offset}
     if search:
         variables["search"] = search.strip()
     data = await _call("Common_SearchMerchantsByName", variables)
-    return project.merchants(data, limit=limit, include_zero_txn=include_zero_txn)
+    return project.merchants(data, limit=limit, include_zero_txn=include_zero_txn,
+                             offset=offset)
 
 
 _INTERVALS = ("auto", "day", "week", "month")
