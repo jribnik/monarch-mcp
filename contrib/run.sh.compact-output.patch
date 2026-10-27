@@ -1,0 +1,28 @@
+--- a/run.sh
++++ b/run.sh
+@@ -24,14 +24,21 @@
+    start_date = __SINCE__ (a FIXED lookback, NOT the last-validated date — transactions
+    can post a day or more after their "date", so a window that only moves forward from the
+    checkpoint would permanently skip late-posting ones), end_date = today. Page as needed.
+-   get_transactions payloads can be large and may be written to a file — if so, query
+-   that file with jq via Bash instead of reading it inline.
++   get_transactions now returns COMPACT rows by default, in an envelope
++   {transactions, total_count, returned, offset, next_offset, truncated}; keep paging
++   (offset=next_offset, limit up to 200) until next_offset is null. Row fields (snake_case):
++   id, date, amount, pending, merchant, merchant_id, category, category_id, account,
++   account_id, review_status, needs_review, hide_from_reports, is_split, tag_ids, has_notes.
++   Hidden transactions are excluded by default (same as before). If a payload is written
++   to a file, query it with jq via Bash, e.g. jq '.transactions[] | {id,date,merchant,amount,category}'.
+    Cross-reference each transaction against the checkpoint file's run notes: skip
+    re-analyzing ones already validated in a prior run (unless something looks newly
+    wrong), and treat the rest as new.
+ 
+-3. Validate EACH transaction using its RAW data — compare plaidName / merchant / amount
+-   against the assigned category:
++3. Validate EACH transaction — compare merchant / amount against the assigned category
++   (compact rows have no plaidName; when the merchant name alone is ambiguous, call
++   mcp__monarch__get_transaction_details(transaction_id) for the raw plaidName/notes, or
++   get_transactions(detail="full", limit<=25) for a handful of rows):
+      - If clearly miscategorized, fix it via mcp__monarch__update_transaction
+        (category ids from mcp__monarch__get_categories) and set needs_review=false.
+      - $0 brokerage artifacts (stock splits, money-market sweeps) -> category Transfer

@@ -58,8 +58,10 @@ Workflow:
   get_tags, list_accounts, get_transaction_rules), then pass it to a write tool.
   Write tools take IDs, not names, except where a parameter says otherwise.
 - Amounts are signed: negative = expense/debit, positive = income/credit.
-- Lists are paged: use offset/limit (get_transactions defaults to 100) and keep
-  paging until a page comes back short.
+- Lists are paged: use offset/limit (get_transactions defaults to 50, compact rows)
+  and keep paging while next_offset is non-null. Hidden transactions and
+  hidden accounts are excluded unless you ask (visibility="all" /
+  include_hidden=True); detail="full" gives the raw, much larger shape.
 - Preview before committing: call preview_transaction_rule (a dry run) to see
   what a rule would match before create_transaction_rule or
   update_transaction_rule, especially with apply_to_existing_transactions=True.
@@ -89,9 +91,23 @@ mcp = FastMCP("monarch", instructions=INSTRUCTIONS)
 # --------------------------------------------------------------------------- #
 
 @mcp.tool()
-async def list_accounts() -> dict[str, Any]:
-    """List all accounts (name, type, balance, institution)."""
-    return await client_reads.list_accounts()
+async def list_accounts(
+    include_hidden: bool = False,
+    account_types: Optional[list[str]] = None,
+    detail: str = "compact",
+) -> dict[str, Any]:
+    """
+    List accounts. Default (detail="compact"): one slim row per account (id,
+    name, type, subtype, balance, institution, is_manual, include_in_net_worth,
+    is_hidden, updated_at) plus totals {assets, liabilities, net_worth} over the
+    accounts flagged include_in_net_worth. Hidden accounts are omitted unless
+    include_hidden=True. account_types filters by type name (e.g. "depository")
+    and narrows the totals too. detail="full" returns the raw account list
+    (every account, other parameters ignored).
+    """
+    return await client_reads.list_accounts(
+        include_hidden=include_hidden, account_types=account_types, detail=detail
+    )
 
 
 @mcp.tool()
@@ -122,7 +138,7 @@ async def get_cashflow_summary() -> dict[str, Any]:
 
 @mcp.tool()
 async def get_transactions(
-    limit: int = 100,
+    limit: int = 50,
     offset: int = 0,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
@@ -130,17 +146,39 @@ async def get_transactions(
     category_ids: Optional[list[str]] = None,
     account_ids: Optional[list[str]] = None,
     tag_ids: Optional[list[str]] = None,
+    merchant_ids: Optional[list[str]] = None,
     has_notes: Optional[bool] = None,
     is_split: Optional[bool] = None,
+    credits_only: Optional[bool] = None,
+    visibility: str = "visible",
+    order_by: str = "date",
+    detail: str = "compact",
+    total_count_only: bool = False,
 ) -> dict[str, Any]:
     """
-    Fetch transactions with filters. Dates are 'YYYY-MM-DD'.
+    Fetch transactions with filters. Dates are 'YYYY-MM-DD' (start_date and
+    end_date go together).
 
     - search: free-text match on merchant/notes; "" for all.
-    - category_ids / account_ids / tag_ids: filter to those ids.
+    - category_ids / account_ids / tag_ids / merchant_ids: filter to those ids.
+    - credits_only: True = only credits (income), False = only debits.
+    - visibility: "visible" (default) excludes hidden transactions (e.g. the
+      auto-hidden Interest/Dividends ones); "all" includes them. A hidden-only
+      mode is not supported.
+    - order_by: only "date" (newest first).
+    - total_count_only: return just {total_count} for the filters.
 
-    To find items needing cleanup (uncategorized / flagged for review), fetch a
-    date range and inspect each transaction's category / needsReview fields.
+    Default detail="compact" returns {transactions, total_count, returned,
+    offset, next_offset, truncated}; each row has id, date, amount, pending,
+    merchant, merchant_id, category, category_id, account, account_id,
+    review_status, needs_review, hide_from_reports, is_split, tag_ids,
+    has_notes. Page while next_offset is non-null (limit max 200; a page is also
+    trimmed to a ~40K-character budget, setting truncated). Use
+    get_transaction_details for one transaction's full record. detail="full"
+    returns the raw rows (limit max 25).
+
+    To find items needing cleanup, fetch a date range and look at
+    needs_review / review_status / category.
     """
     return await client_reads.get_transactions(
         limit=limit,
@@ -151,8 +189,14 @@ async def get_transactions(
         category_ids=category_ids,
         account_ids=account_ids,
         tag_ids=tag_ids,
+        merchant_ids=merchant_ids,
         has_notes=has_notes,
         is_split=is_split,
+        credits_only=credits_only,
+        visibility=visibility,
+        order_by=order_by,
+        detail=detail,
+        total_count_only=total_count_only,
     )
 
 
