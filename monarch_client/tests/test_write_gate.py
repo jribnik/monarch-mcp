@@ -131,6 +131,14 @@ async def test_disabled_refuses_every_write_and_sends_nothing(
         assert name in str(exc.value)
         assert writes.WRITES_ENV in str(exc.value)
 
+    # bulk_update_transactions is "ungated" only in dry-run mode: a commit
+    # (dry_run=False) must be refused for every non-"1" env value too.
+    with pytest.raises(errors.MonarchWriteBlocked) as exc:
+        await writes.bulk_update_transactions(
+            ["x"], category_id="c", dry_run=False, confirm="1"
+        )
+    assert exc.value.gate == "enabled" and writes.WRITES_ENV in str(exc.value)
+
     assert fake_client.calls == [], "a refused write must not reach the network"
 
 

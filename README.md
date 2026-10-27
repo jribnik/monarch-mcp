@@ -141,7 +141,7 @@ Then restart Claude Code so it connects. Ask things like:
 | `recategorize_transaction` | **write** | set a transaction's category |
 | `update_transaction` | **write** | edit merchant/amount/date/notes/flags; `reviewed=True` = Mark as reviewed |
 | `set_transaction_tags` | **write** | replace a transaction's tags |
-| `bulk_update_transactions` | **write** | same change to up to 50 transactions (category, tags, hide, reviewed/needs_review, notes) by looping the single-transaction mutations; `dry_run` defaults to **True** (works with writes disabled) and returns per-transaction before/after diffs; committing needs `dry_run=False` and `confirm=str(would_affect_count)` from a fresh read; per-transaction results, failures don't abort the batch |
+| `bulk_update_transactions` | **write** | same change to up to 50 transactions (category, tags, hide, reviewed/needs_review, notes) by looping the single-transaction mutations; `dry_run` defaults to **True** (works with writes disabled) and returns per-transaction before/after diffs; committing needs `dry_run=False` and `confirm=str(would_affect_count)` from that dry run (a wrong confirm is refused without revealing the expected count); each transaction is re-read after the commit and reported `verified: true/false`; failures don't abort the batch |
 | `create_tag` | **write** | create a new tag |
 | `delete_tag` | **write, destructive** | delete a tag; needs `confirm` = the tag's name |
 | `create_transaction_rule` | **write** | create an auto-categorization rule (incl. renaming merchants); `apply_to_existing_transactions=True` needs `confirm=str(count)` of a fresh preview |
@@ -157,16 +157,17 @@ Then restart Claude Code so it connects. Ask things like:
 | `update_account` / `delete_account` | **write** (delete is destructive) | edit a manual **asset** account (liability accounts are refused, see Security); delete needs `confirm_name`; both refuse anything not positively identified as manual |
 | `set_budget_amount` / `set_flex_budget_amount` | **write** | planned amounts; `apply_to_future` defaults False, and `True` needs `confirm` (category name / the month's current flex amount, e.g. `250.00`) |
 | `create_savings_goal` / `update_savings_goal` / `set_savings_goal_budget_amount` / `delete_savings_goal` | **write** (delete is destructive) | savings goals; create returns the new goal plus `followUpError` if applying the target fails; delete needs `confirm` = the goal's name; `set_savings_goal_budget_amount(apply_to_future=True)` needs `confirm` = the goal's name |
-| `split_transaction` / `unsplit_transaction` | **write** | split must sum exactly to the parent amount; `dry_run=True` (works with writes disabled) reads the transaction and returns `{transaction_amount, current_splits, proposed_splits, sum_ok}` without sending |
+| `split_transaction` / `unsplit_transaction` | **write** | split must sum exactly to the parent amount; `dry_run=True` (works with writes disabled) reads the transaction and returns `{transaction_amount, is_split, current_splits, proposed_splits, sum_ok}` (proposed built from the exact payload; effective inherited category/merchant shown; unsplit of a non-split transaction is `noop: true`) without sending |
 | `update_transaction_rule` | **write** | full-rule update with merge; adds tag/hide/review/percentage-split actions; `apply_to_existing_transactions=True` needs `confirm=str(count)` of a fresh preview of the merged criteria |
 
 ## Security
 
 - **Writes are gated, in layers.**
   1. *Master switch.* With `MONARCH_CLIENT_ENABLE_WRITES` unset (or anything
-     other than `1`), **all 31 write tools** raise `MonarchWriteBlocked` before
-     sending anything. Reads and the dry-run `preview_transaction_rule` are
-     unaffected. A second check inside `writes._call`, and a third in
+     other than `1`), every **committing** write raises `MonarchWriteBlocked`
+     before sending anything. Reads, the dry-run `preview_transaction_rule` and
+     the `dry_run` modes of `split_transaction`, `unsplit_transaction` and
+     `bulk_update_transactions` (read-only previews) are unaffected. A second check inside `writes._call`, and a third in
      `MonarchClient.call`, refuses any vendored mutation while the gate is
      closed, so a future write that forgets the per-tool check still can't
      fire. `python -m monarch_client.doctor` prints whether the gate is open.

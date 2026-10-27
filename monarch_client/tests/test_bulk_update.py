@@ -13,19 +13,45 @@ class _FakeClient:
         self.txns = txns
         self.fail = fail or {}
         self.calls = []
+        self.responses = {}   # op -> payload override (still applies the change)
+        self.apply_on_fail = set()  # ids whose raising call still applied server-side
 
     async def call(self, op_name, variables):
         self.calls.append((op_name, variables))
         if op_name == "Web_GetTransactionDrawer":
             return {"getTransaction": self.txns.get(variables["id"]), "myHousehold": {}}
-        tid = (variables["input"].get("id") or variables["input"].get("transactionId"))
+        inp = variables["input"]
+        tid = inp.get("id") or inp.get("transactionId")
         if tid in self.fail:
+            if tid in self.apply_on_fail:
+                self._apply(op_name, tid, inp)
             raise RuntimeError(self.fail[tid])
+        if op_name in self.responses:
+            if self.responses[op_name] != "NOAPPLY":
+                self._apply(op_name, tid, inp)
+            return self.responses[op_name]
+        self._apply(op_name, tid, inp)
         if op_name == "Web_TransactionDrawerUpdateTransaction":
             return {"updateTransaction": {"transaction": {"id": tid}, "errors": None}}
         if op_name == "Web_SetTransactionTags":
             return {"setTransactionTags": {"transaction": {"id": tid}, "errors": None}}
         raise AssertionError(op_name)
+
+    def _apply(self, op_name, tid, inp):
+        t = self.txns[tid]
+        if op_name == "Web_SetTransactionTags":
+            t["tags"] = [{"id": x} for x in inp["tagIds"]]
+            return
+        if "category" in inp:
+            t["category"] = {"id": inp["category"], "name": "n"}
+        if "hideFromReports" in inp:
+            t["hideFromReports"] = inp["hideFromReports"]
+        if "reviewed" in inp:
+            t["reviewStatus"] = "reviewed"
+        if "needsReview" in inp:
+            t["needsReview"] = inp["needsReview"]
+        if "notes" in inp:
+            t["notes"] = inp["notes"]
 
     def mutations(self):
         return [c for c in self.calls if c[0] != "Web_GetTransactionDrawer"]
@@ -131,10 +157,10 @@ async def test_field_to_mutation_mapping(fake):
         dry_run=False, confirm="2",
     )
     assert out["applied_count"] == 2 and out["failed_count"] == 0
-    assert out["results"][0] == {
-        "id": "t0", "ok": True,
-        "applied": ["category_id", "hide_from_reports", "review_status", "notes", "tag_ids"],
-    }
+    r0 = dict(out["results"][0])
+    assert sorted(r0.pop("applied")) == sorted(
+        ["category_id", "hide_from_reports", "review_status", "notes", "tag_ids"])
+    assert r0 == {"id": "t0", "ok": True, "verified": True}
     muts = fake.mutations()
     assert muts[0] == (
         "Web_TransactionDrawerUpdateTransaction",
@@ -178,6 +204,7 @@ async def test_partial_failure_is_reported_and_batch_continues(fake):
     assert out["failed_ids"] == ["t1"]
     assert [r["ok"] for r in out["results"]] == [True, False, True]
     assert "boom" in out["results"][1]["error"]
+    assert out["results"][1]["verified"] is False and out["results"][1]["applied"] == []
     assert len(fake.mutations()) == 3  # t2 still attempted after t1 failed
 
 
@@ -196,4 +223,143 @@ async def test_api_level_errors_count_as_failures_and_partial_apply_is_visible(f
         ["t0"], category_id="c9", tag_ids=["g1"], dry_run=False, confirm="1"
     )
     r, = out["results"]
-    assert r["ok"] is False and r["applied"] == ["category_id"] and "bad tag" in r["error"]
+    assert r["ok"] is False and r["verified"] is False
+    assert r["applied"] == ["category_id"] and r["not_applied"] == ["tag_ids"]
+    assert "bad tag" in r["error"]
+
+
+BAD_UPDATE_SHAPES = {
+    "null_payload": None,
+    "empty_dict": {},
+    "null_transaction": {"transaction": None, "errors": None},
+    "missing_transaction": {"errors": None},
+    "empty_errors_object": {"transaction": {"id": "t0"}, "errors": {}},
+    "errors_message": {"transaction": {"id": "t0"}, "errors": {"message": "no"}},
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", sorted(BAD_UPDATE_SHAPES))
+async def test_rejected_response_shapes_count_as_failed(fake, shape):
+    # the server did NOT apply anything: the re-read shows the old value
+    fake.responses["Web_TransactionDrawerUpdateTransaction"] = "NOAPPLY"
+    orig = fake.call
+
+    async def call(op, variables):
+        if op == "Web_TransactionDrawerUpdateTransaction":
+            fake.calls.append((op, variables))
+            return {"updateTransaction": BAD_UPDATE_SHAPES[shape]}
+        return await orig(op, variables)
+
+    fake.call = call
+    out = await writes.bulk_update_transactions(
+        ["t0"], category_id="c9", dry_run=False, confirm="1"
+    )
+    r, = out["results"]
+    assert out["failed_count"] == 1 and out["applied_count"] == 0
+    assert r["ok"] is False and r["verified"] is False and r["applied"] == []
+    assert "update" in r["error"]
+
+
+@pytest.mark.asyncio
+async def test_good_response_shape_is_verified(fake):
+    out = await writes.bulk_update_transactions(
+        ["t0"], category_id="c9", dry_run=False, confirm="1"
+    )
+    r, = out["results"]
+    assert r == {"id": "t0", "ok": True, "verified": True, "applied": ["category_id"]}
+    assert "error" not in r
+
+
+@pytest.mark.asyncio
+async def test_timeout_that_the_server_applied_is_verified(fake):
+    fake.fail["t0"] = "timed out"
+    fake.apply_on_fail.add("t0")
+    out = await writes.bulk_update_transactions(
+        ["t0"], category_id="c9", dry_run=False, confirm="1"
+    )
+    r, = out["results"]
+    assert r["verified"] is True and r["applied"] == ["category_id"]
+    assert "timed out" in r["error"]  # the raise is still surfaced
+    assert out["applied_count"] == 1 and out["failed_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_accepted_payload_but_reread_mismatch_is_unverified(fake):
+    # accepted response, but the change was not actually stored
+    fake.responses["Web_TransactionDrawerUpdateTransaction"] = {
+        "updateTransaction": {"transaction": {"id": "t0"}, "errors": None}}
+    orig_apply = fake._apply
+    fake._apply = lambda *a: None
+    out = await writes.bulk_update_transactions(
+        ["t0"], category_id="c9", dry_run=False, confirm="1"
+    )
+    fake._apply = orig_apply
+    r, = out["results"]
+    assert r["verified"] is False and r["not_applied"] == ["category_id"]
+    assert "error" not in r
+
+
+@pytest.mark.asyncio
+async def test_confirm_refusal_does_not_reveal_expected_count(fake):
+    with pytest.raises(ValueError) as exc:
+        await writes.bulk_update_transactions(
+            ["t0", "t1", "t2"], category_id="c9", dry_run=False, confirm="9"
+        )
+    msg = str(exc.value)
+    assert "dry_run=True" in msg and "would_affect_count" in msg
+    assert "'3'" not in msg and "expected one of" not in msg and "3" not in msg.replace("'9'", "")
+    assert fake.mutations() == []
+
+
+@pytest.mark.asyncio
+async def test_other_tools_still_reveal_expected_confirm():
+    with pytest.raises(ValueError, match="expected one of"):
+        writes._require_confirm("t", "wrong", ["right"], "the thing")
+
+
+@pytest.mark.asyncio
+async def test_duplicate_ids_are_deduplicated(fake):
+    out = await writes.bulk_update_transactions(
+        ["t0", "t0", "t1", "t0"], category_id="c9", dry_run=False, confirm="2"
+    )
+    assert [r["id"] for r in out["results"]] == ["t0", "t1"]
+    assert len(fake.mutations()) == 2
+
+
+@pytest.mark.asyncio
+async def test_missing_ids_at_commit_are_reported_not_touched(fake):
+    out = await writes.bulk_update_transactions(
+        ["t0", "ghost"], category_id="c9", dry_run=False, confirm="1"
+    )
+    assert out["missing_ids"] == ["ghost"] and out["applied_count"] == 1
+    assert all(v["input"].get("id") != "ghost" for _, v in fake.mutations())
+    # confirm counts only the real ones: "2" (incl. the missing id) is refused
+    with pytest.raises(ValueError):
+        await writes.bulk_update_transactions(
+            ["t1", "ghost"], category_id="c9", dry_run=False, confirm="2"
+        )
+
+
+@pytest.mark.parametrize("env", [None, "0", "true", "yes", ""])
+@pytest.mark.asyncio
+async def test_commit_refused_for_every_non_one_env_value(fake, monkeypatch, env):
+    if env is None:
+        monkeypatch.delenv(writes.WRITES_ENV, raising=False)
+    else:
+        monkeypatch.setenv(writes.WRITES_ENV, env)
+    with pytest.raises(errors.MonarchWriteBlocked):
+        await writes.bulk_update_transactions(
+            ["t0"], category_id="c9", dry_run=False, confirm="1"
+        )
+    assert fake.calls == []
+
+
+def test_dry_run_defaults_to_true_in_function_and_tool_schema():
+    import inspect
+    import server
+
+    assert inspect.signature(writes.bulk_update_transactions).parameters["dry_run"].default is True
+    tool = server.mcp._tool_manager.get_tool("bulk_update_transactions")
+    assert tool.parameters["properties"]["dry_run"]["default"] is True
+    assert "dry_run" not in tool.parameters.get("required", [])

@@ -11,8 +11,10 @@ from an already-completed api-recon Monarch login (see monarch_client/auth.py).
 This server never sees your password -- only the saved Monarch session,
 exported via `recon export-session`.
 
-Writes: every write tool is refused unless the server's environment sets
-MONARCH_CLIENT_ENABLE_WRITES=1 (see monarch_client/gate.py). On top of that
+Writes: committing writes is refused unless the server's environment sets
+MONARCH_CLIENT_ENABLE_WRITES=1 (see monarch_client/gate.py); the dry_run modes
+(split_transaction / unsplit_transaction / bulk_update_transactions with
+dry_run=True) only read and work with writes off. On top of that
 master switch, each of the 8 destructive tools (delete_transaction, delete_tag,
 delete_transaction_rule, delete_category_group, delete_category,
 delete_savings_goal, delete_account, mark_stream_as_not_recurring) takes a
@@ -68,12 +70,16 @@ Workflow:
   update_transaction_rule, especially with apply_to_existing_transactions=True.
 
 Writes and safety:
-- Every write tool is refused unless the server environment sets
+- Committing a write is refused unless the server environment sets
   MONARCH_CLIENT_ENABLE_WRITES=1; if one reports writes are disabled, tell the
-  user rather than retrying.
+  user rather than retrying. dry_run modes (split_transaction,
+  unsplit_transaction, bulk_update_transactions with dry_run=True) only read
+  and work with writes off.
 - For the same change to many transactions use bulk_update_transactions: it
   defaults to a dry run; show the user the diffs, then commit with
-  dry_run=False and confirm=str(would_affect_count).
+  dry_run=False and confirm=str(would_affect_count) taken from that dry run
+  (a wrong confirm is refused without revealing the expected value). Check
+  each result's `verified` flag.
 - Destructive tools (delete_*, mark_stream_as_not_recurring) take a required
   `confirm` that must echo a value from a fresh read of the target (its name;
   for delete_transaction "<merchant> <amount>"). Wide-blast flags
@@ -321,10 +327,13 @@ async def bulk_update_transactions(
     transaction and returns {would_affect_count, missing_ids, unchanged_ids,
     diffs: [{id, merchant, amount, before, after}]} without changing anything.
     Show the diffs to the user first. To commit, call again with dry_run=False
-    and confirm=str(would_affect_count) (recomputed from a fresh read; the
-    user must have approved that exact set). Failures are per transaction:
-    the commit continues and reports each one under results, so check
-    failed_count.
+    and confirm=str(would_affect_count) taken from the dry run (recomputed
+    from a fresh read; a wrong confirm is refused WITHOUT revealing the
+    expected value, so run the dry run first and have the user approve that
+    exact set). Each transaction is re-read after the commit and compared to
+    the intended values: results[].verified says whether it really changed
+    (even if the call timed out). Failures are per transaction: the commit
+    continues, so check failed_count.
     """
     return await client_writes.bulk_update_transactions(
         transaction_ids=transaction_ids,
