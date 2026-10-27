@@ -44,6 +44,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 
 from monarch_client import reads as client_reads
 from monarch_client import writes as client_writes
@@ -95,12 +96,16 @@ Writes and safety:
 
 mcp = FastMCP("monarch", instructions=INSTRUCTIONS)
 
+# Hermes (and any MCP client honoring `trust: untrusted`) gates every tool whose discovery-time
+# readOnlyHint is not exactly True. Only tools that can never change external state get it.
+READ_ONLY = ToolAnnotations(readOnlyHint=True)
+
 
 # --------------------------------------------------------------------------- #
 # Read tools
 # --------------------------------------------------------------------------- #
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def list_accounts(
     include_hidden: bool = False,
     account_types: Optional[list[str]] = None,
@@ -122,19 +127,19 @@ async def list_accounts(
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_categories() -> dict[str, Any]:
     """List all transaction categories and their groups (id, name)."""
     return await client_reads.get_categories()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_tags() -> dict[str, Any]:
     """List all transaction tags (id, name, color)."""
     return await client_reads.get_tags()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_budgets(
     start_date: Optional[str] = None, end_date: Optional[str] = None
 ) -> dict[str, Any]:
@@ -142,13 +147,13 @@ async def get_budgets(
     return await client_reads.get_budgets(start_date=start_date, end_date=end_date)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_cashflow_summary() -> dict[str, Any]:
     """Get the transactions summary (income/expense totals, counts)."""
     return await client_reads.get_cashflow_summary()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_transactions(
     limit: int = 50,
     offset: int = 0,
@@ -218,13 +223,13 @@ async def get_transactions(
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_transaction_details(transaction_id: str) -> dict[str, Any]:
     """Get full details for one transaction (splits, category, tags, notes)."""
     return await client_reads.get_transaction_details(transaction_id=transaction_id)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_recurring_transactions(
     start_date: Optional[str] = None, end_date: Optional[str] = None
 ) -> dict[str, Any]:
@@ -364,14 +369,14 @@ async def delete_tag(tag_id: str, confirm: str) -> dict[str, Any]:
     return await client_writes.delete_tag(tag_id=tag_id, confirm=confirm)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_account_type_options() -> dict[str, Any]:
     """List every valid (type.name, subtype.name) pair for create_manual_account.
     Use before calling it -- Monarch rejects an unlisted pair."""
     return await client_reads.get_account_type_options()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_merchants(
     search: Optional[str] = None,
     limit: int = 100,
@@ -398,7 +403,7 @@ async def get_merchants(
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_net_worth_history(
     start_date: str, end_date: Optional[str] = None, interval: str = "auto"
 ) -> dict[str, Any]:
@@ -416,7 +421,7 @@ async def get_net_worth_history(
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_credit_score_history(start_date: str, end_date: str) -> dict[str, Any]:
     """
     Credit score snapshots between start_date and end_date ('YYYY-MM-DD',
@@ -427,20 +432,20 @@ async def get_credit_score_history(start_date: str, end_date: str) -> dict[str, 
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_household_members() -> dict[str, Any]:
     """List household members (id, name, display_name, role, is_me)."""
     return await client_reads.get_household_members()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_businesses() -> dict[str, Any]:
     """List business entities (id, name, description, structure, linked accounts,
     account and transaction counts)."""
     return await client_reads.get_businesses()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_goals(include_archived: bool = False) -> dict[str, Any]:
     """
     List savings goals (balance, target, progress, monthly contribution,
@@ -450,7 +455,7 @@ async def get_goals(include_archived: bool = False) -> dict[str, Any]:
     return await client_reads.get_goals(include_archived=include_archived)
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def get_transaction_rules() -> dict[str, Any]:
     """
     List all transaction rules (auto-categorization rules), in priority order.
@@ -462,7 +467,7 @@ async def get_transaction_rules() -> dict[str, Any]:
     return await client_reads.get_transaction_rules()
 
 
-@mcp.tool()
+@mcp.tool(annotations=READ_ONLY)
 async def preview_transaction_rule(
     merchant_name_criteria: Optional[list[dict[str, str]]] = None,
     original_statement_criteria: Optional[list[dict[str, str]]] = None,

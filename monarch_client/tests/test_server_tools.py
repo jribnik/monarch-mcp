@@ -306,3 +306,25 @@ async def test_split_unsplit_update_rule_end_to_end_through_fastmcp(real_fake):
     ops = [op for op, _ in real_fake.calls]
     assert ops.count("Common_SplitTransactionMutation") == 2
     assert "Common_UpdateTransactionRuleMutationV2" in ops
+
+
+def test_read_only_hint_marks_exactly_the_read_tools():
+    """MCP clients with a `trust: untrusted` policy (Hermes) gate every tool whose readOnlyHint is
+    not exactly True, so the hint must be on every read tool and never on a write tool."""
+    import asyncio
+
+    tools = {t.name: t for t in asyncio.run(server.mcp.list_tools())}
+    hinted = {n for n, t in tools.items() if t.annotations and t.annotations.readOnlyHint is True}
+    assert hinted == EXPECTED_READ_TOOLS
+    assert not (EXPECTED_WRITE_TOOLS & hinted)
+
+
+def test_read_only_tools_only_call_read_paths():
+    """preview_transaction_rule lives in the writes module but is a pure dry-run query; every other
+    read tool must stay out of the client write modules entirely."""
+    import ast
+
+    tree = ast.parse((ROOT / "server.py").read_text())
+    for node in tree.body:
+        if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)) and node.name in EXPECTED_READ_TOOLS - {"preview_transaction_rule"}:
+            assert "client_writes" not in ast.unparse(node), node.name
