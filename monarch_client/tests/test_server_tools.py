@@ -148,6 +148,21 @@ def test_server_registers_exactly_the_expected_tools():
     assert len(EXPECTED_READ_TOOLS) == 11 and len(EXPECTED_WRITE_TOOLS) == 30
 
 
+def test_server_instructions_describe_the_workflow_and_name_key_tools():
+    text = server.mcp.instructions
+    assert text and text == server.INSTRUCTIONS
+    for needle in (
+        "preview_transaction_rule", "MONARCH_CLIENT_ENABLE_WRITES", "confirm",
+        "offset/limit", "update_transaction", "negative",
+    ):
+        assert needle in text
+    # every tool the instructions name must actually exist
+    names = {t.name for t in _tools()}
+    assert {"preview_transaction_rule", "update_transaction", "get_transactions",
+            "get_categories", "get_tags", "list_accounts",
+            "get_transaction_rules"} <= names
+
+
 @pytest.mark.parametrize("tool", sorted(CONFIRM_REQUIRED))
 def test_destructive_tools_require_confirm(tool):
     spec = {t.name: t for t in _tools()}[tool].inputSchema
