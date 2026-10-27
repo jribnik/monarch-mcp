@@ -10,9 +10,10 @@ counterpart exactly, same as reads.py.
 This module: create_tag, delete_tag, preview_transaction_rule,
 create_transaction_rule, delete_transaction_rule, recategorize_transaction,
 update_transaction, set_transaction_tags, mark_stream_as_not_recurring,
-create_transaction, delete_transaction, create_manual_account -- 12
-functions, 11 write tools (preview_transaction_rule is a dry-run query and is
-counted with the reads). The rest of the 30 write tools live in
+create_transaction, delete_transaction, create_manual_account,
+bulk_update_transactions -- 13
+functions, 12 write tools (preview_transaction_rule is a dry-run query and is
+counted with the reads). The rest of the 31 write tools live in
 writes_categories.py (8), writes_accounts.py (8) and writes_splits_rules.py
 (3). See README.md for the full tool table and operations/__init__.py's
 PROVENANCE for each op's provenance.
@@ -200,7 +201,7 @@ def _require_manual(account: dict[str, Any], tool: str) -> None:
 
 
 def _require_confirm(
-    tool: str, confirm: Any, accepted: Any, target: str
+    tool: str, confirm: Any, accepted: Any, target: str, reveal_expected: bool = True
 ) -> None:
     """Confirmation gate for destructive / wide-blast-radius writes.
 
@@ -212,9 +213,22 @@ def _require_confirm(
     looked at what it is about to destroy, and refusing a stale or mistyped
     id. `accepted` is the set of acceptable echoes (falsy entries ignored);
     the refusal names them so the caller can retry only after the user
-    has confirmed that specific target."""
+    has confirmed that specific target.
+
+    reveal_expected=False is for confirms whose accepted value is itself the
+    thing the caller must have looked up (bulk_update_transactions: a count
+    from its own dry run): the refusal then does NOT echo the accepted value
+    or `target`, so the error can't be used to read the answer and retry."""
     options = sorted({a for a in accepted if a})
     if not isinstance(confirm, str) or not confirm or confirm not in options:
+        if not reveal_expected:
+            raise ValueError(
+                f"{tool}: confirm={confirm!r} does not exactly match the "
+                "expected confirmation -- NOT proceeding. Run the same call "
+                "with dry_run=True first and pass its would_affect_count "
+                "(as a string) as confirm, only after the user has approved "
+                "that set."
+            )
         raise ValueError(
             f"{tool}: confirm={confirm!r} does not exactly match {target} "
             f"(expected one of {options}) -- NOT proceeding. Only retry with "
@@ -689,3 +703,241 @@ async def mark_stream_as_not_recurring(stream_id: str, confirm: str) -> dict[str
     )
     data = await _call("Common_MarkAsNotRecurring", {"streamId": stream_id})
     return project.mark_stream_as_not_recurring_result(data)
+
+
+BULK_UPDATE_MAX_IDS = 50
+
+
+def _bulk_before(txn: dict[str, Any], tag_ids: Optional[list[str]]) -> dict[str, Any]:
+    """The pre-image of every field bulk_update_transactions can change."""
+    return {
+        "category_id": (txn.get("category") or {}).get("id"),
+        "category": (txn.get("category") or {}).get("name"),
+        "tag_ids": [t.get("id") for t in txn.get("tags") or []],
+        "hide_from_reports": txn.get("hideFromReports"),
+        "review_status": txn.get("reviewStatus"),
+        "needs_review": txn.get("needsReview"),
+        "notes": txn.get("notes") or "",
+    }
+
+
+def _payload_rejection(payload: Any) -> Optional[str]:
+    """None if a mutation payload counts as ACCEPTED, else why not. Accepted =
+    payload is a non-empty dict, `transaction` is non-null and `errors` is
+    None. Per the repo's PayloadError convention (see
+    writes_splits_rules.update_transaction_rule_result) the server signals
+    some rejections as a non-null but EMPTY errors object, so any non-None
+    `errors` -- including {} -- is a rejection; a null/empty payload or a
+    null transaction is too."""
+    if not isinstance(payload, dict) or not payload:
+        return f"returned an empty payload ({payload!r})"
+    if payload.get("errors") is not None:
+        return f"was rejected: errors={payload['errors']!r}"
+    if not payload.get("transaction"):
+        return "returned no transaction"
+    return None
+
+
+def _bulk_equal(key: str, now: Any, want: Any) -> bool:
+    if key == "tag_ids":
+        return sorted(now or []) == sorted(want or [])
+    if key == "notes":
+        return (now or "") == (want or "")
+    return now == want
+
+
+async def _bulk_plan(
+    transaction_ids: list[str],
+    category_id: Optional[str],
+    tag_ids: Optional[list[str]],
+    hide_from_reports: Optional[bool],
+    reviewed: Optional[bool],
+    needs_review: Optional[bool],
+    notes: Optional[str],
+) -> dict[str, Any]:
+    """Fresh-read every id and work out, per transaction, which of the
+    requested fields would actually change. Sends no mutation."""
+    diffs: list[dict[str, Any]] = []
+    missing: list[str] = []
+    unchanged: list[str] = []
+    for tid in transaction_ids:
+        txn = (await reads.get_transaction_details(tid)).get("getTransaction")
+        if not txn:
+            missing.append(tid)
+            continue
+        cur = _bulk_before(txn, tag_ids)
+        before: dict[str, Any] = {}
+        after: dict[str, Any] = {}
+
+        def want(key: str, new: Any) -> None:
+            if cur[key] != new:
+                before[key] = cur[key]
+                after[key] = new
+
+        if category_id is not None:
+            want("category_id", category_id)
+        if tag_ids is not None:
+            if sorted(cur["tag_ids"]) != sorted(tag_ids):
+                before["tag_ids"] = cur["tag_ids"]
+                after["tag_ids"] = list(tag_ids)
+        if hide_from_reports is not None:
+            want("hide_from_reports", bool(hide_from_reports))
+        if reviewed is not None:
+            want("review_status", "reviewed")
+        if needs_review is not None:
+            want("needs_review", bool(needs_review))
+        if notes is not None:
+            want("notes", notes)
+        if not after:
+            unchanged.append(tid)
+            continue
+        diffs.append(
+            {
+                "id": tid,
+                "merchant": (txn.get("merchant") or {}).get("name"),
+                "amount": txn.get("amount"),
+                "before": before,
+                "after": after,
+            }
+        )
+    return {
+        "would_affect_count": len(diffs),
+        "missing_ids": missing,
+        "unchanged_ids": unchanged,
+        "diffs": diffs,
+    }
+
+
+async def bulk_update_transactions(
+    transaction_ids: list[str],
+    category_id: Optional[str] = None,
+    tag_ids: Optional[list[str]] = None,
+    hide_from_reports: Optional[bool] = None,
+    reviewed: Optional[bool] = None,
+    needs_review: Optional[bool] = None,
+    notes: Optional[str] = None,
+    dry_run: bool = True,
+    confirm: Optional[str] = None,
+) -> dict[str, Any]:
+    """Apply the same field changes to up to BULK_UPDATE_MAX_IDS transactions.
+
+    v1 loops the already-vendored single-transaction mutations (the update
+    mutation for category/hide/review/notes, setTags for tag_ids) -- there is
+    no new GraphQL op and no bulk mutation involved. dry_run (the DEFAULT)
+    freshly reads each transaction and returns {would_affect_count,
+    missing_ids, unchanged_ids, diffs}; it needs no write gate and sends no
+    mutation. A commit (dry_run=False) needs the write master switch AND
+    confirm == str(would_affect_count), recomputed from a fresh read inside
+    this call (transactions that already have the requested values are not
+    counted). The commit continues past per-transaction failures and reports
+    each one in `results`; it never raises away results already applied.
+    After a commit EACH transaction is re-read and compared to the intended
+    `after` values: `verified` (and `ok`) is True only if all of them match,
+    `applied` lists the fields that do, `not_applied` those that don't. That
+    re-read, not the mutation response, is the source of truth (a timed-out
+    call the server applied still verifies). A mutation counts as rejected
+    when its payload is empty/null, `transaction` is null, or `errors` is
+    anything but None (an EMPTY errors object is a rejection)."""
+    ids = list(dict.fromkeys(transaction_ids or []))  # dedupe, keep order
+    if not ids:
+        raise ValueError("bulk_update_transactions: transaction_ids must not be empty")
+    if len(ids) > BULK_UPDATE_MAX_IDS:
+        raise ValueError(
+            f"bulk_update_transactions: {len(ids)} ids given, max is "
+            f"{BULK_UPDATE_MAX_IDS} -- split into smaller batches"
+        )
+    if all(
+        v is None
+        for v in (category_id, tag_ids, hide_from_reports, reviewed, needs_review, notes)
+    ):
+        raise ValueError(
+            "bulk_update_transactions: nothing to change -- pass at least one of "
+            "category_id, tag_ids, hide_from_reports, reviewed, needs_review, notes"
+        )
+    if reviewed is not None and needs_review is not None:
+        raise ValueError(
+            "bulk_update_transactions: pass reviewed=True OR needs_review, not both"
+        )
+    if reviewed is not None and reviewed is not True:
+        raise ValueError("bulk_update_transactions: reviewed only supports True")
+    if not dry_run:
+        _require_writes("bulk_update_transactions")
+
+    plan = await _bulk_plan(
+        ids, category_id, tag_ids, hide_from_reports, reviewed, needs_review, notes
+    )
+    if dry_run:
+        return {"dry_run": True, **plan}
+
+    count = plan["would_affect_count"]
+    _require_confirm(
+        "bulk_update_transactions", confirm, [str(count)],
+        "the would_affect_count of a fresh dry run", reveal_expected=False,
+    )
+    if count == 0:
+        raise ValueError(
+            "bulk_update_transactions: nothing would change -- NOT proceeding"
+        )
+
+    results: list[dict[str, Any]] = []
+    for d in plan["diffs"]:
+        tid = d["id"]
+        fields = d["after"]
+        errs: list[str] = []
+        # 1. send the mutations; a raise or a rejected payload is recorded,
+        #    never trusted either way -- the re-read below is the truth.
+        if fields.keys() - {"tag_ids"}:
+            try:
+                res = await _update_transaction(
+                    tid,
+                    category_id=category_id if "category_id" in fields else None,
+                    hide_from_reports=hide_from_reports if "hide_from_reports" in fields else None,
+                    reviewed=reviewed if "review_status" in fields else None,
+                    needs_review=needs_review if "needs_review" in fields else None,
+                    notes=notes if "notes" in fields else None,
+                )
+                bad = _payload_rejection(res.get("updateTransaction"))
+                if bad:
+                    errs.append(f"update {bad}")
+            except Exception as e:  # e.g. timeout: the server may still have applied it
+                errs.append(f"update raised {type(e).__name__}: {e}")
+        if "tag_ids" in fields:
+            try:
+                res = await set_transaction_tags(tid, list(tag_ids or []))
+                bad = _payload_rejection(res.get("setTransactionTags"))
+                if bad:
+                    errs.append(f"set tags {bad}")
+            except Exception as e:
+                errs.append(f"set tags raised {type(e).__name__}: {e}")
+        # 2. re-read and compare against the intended `after` values
+        entry: dict[str, Any] = {"id": tid}
+        try:
+            fresh = (await reads.get_transaction_details(tid)).get("getTransaction")
+            if not fresh:
+                raise ValueError("transaction not found on re-read")
+            now = _bulk_before(fresh, tag_ids)
+            applied = [k for k, want in fields.items() if _bulk_equal(k, now[k], want)]
+            mismatched = [k for k in fields if k not in applied]
+            verified = not mismatched
+        except Exception as e:
+            applied, mismatched, verified = [], list(fields), False
+            errs.append(f"verify re-read failed {type(e).__name__}: {e}")
+        entry.update(
+            ok=verified, verified=verified, applied=applied,
+        )
+        if mismatched:
+            entry["not_applied"] = mismatched
+        if errs:
+            entry["error"] = "; ".join(errs)
+        results.append(entry)
+    failed = [r["id"] for r in results if not r["verified"]]
+    return {
+        "dry_run": False,
+        "would_affect_count": count,
+        "applied_count": len(results) - len(failed),
+        "failed_count": len(failed),
+        "failed_ids": failed,
+        "missing_ids": plan["missing_ids"],
+        "unchanged_ids": plan["unchanged_ids"],
+        "results": results,
+    }

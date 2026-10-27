@@ -26,8 +26,10 @@ from monarch_client import (
 
 # Public coroutine functions in writes.py that are deliberately NOT gated:
 # preview_transaction_rule is a dry-run (a query that sends nothing that
-# mutates), classified as a "read" at the tool level.
-UNGATED = {"preview_transaction_rule"}
+# mutates), classified as a "read" at the tool level. bulk_update_transactions
+# defaults to dry_run=True (reads only) and checks the gate itself on a commit
+# (dry_run=False) -- covered in test_bulk_update.py.
+UNGATED = {"preview_transaction_rule", "bulk_update_transactions"}
 
 EXPECTED_GATED = {
     "create_tag",
@@ -129,6 +131,14 @@ async def test_disabled_refuses_every_write_and_sends_nothing(
         assert name in str(exc.value)
         assert writes.WRITES_ENV in str(exc.value)
 
+    # bulk_update_transactions is "ungated" only in dry-run mode: a commit
+    # (dry_run=False) must be refused for every non-"1" env value too.
+    with pytest.raises(errors.MonarchWriteBlocked) as exc:
+        await writes.bulk_update_transactions(
+            ["x"], category_id="c", dry_run=False, confirm="1"
+        )
+    assert exc.value.gate == "enabled" and writes.WRITES_ENV in str(exc.value)
+
     assert fake_client.calls == [], "a refused write must not reach the network"
 
 
@@ -194,7 +204,7 @@ async def test_call_layer_blocks_any_mutation_op_when_closed(monkeypatch, fake_c
     every vendored mutation-kind op while the gate is closed."""
     monkeypatch.delenv(writes.WRITES_ENV, raising=False)
     mutations = [n for n in operations.PROVENANCE if operations.is_mutation(n)]
-    # 30 write tools, 28 distinct mutation ops: recategorize_transaction and
+    # 31 write tools, 28 distinct mutation ops: recategorize_transaction and
     # update_transaction share Web_TransactionDrawerUpdateTransaction, and
     # split_transaction / unsplit_transaction share Common_SplitTransactionMutation.
     assert len(mutations) == 28, mutations

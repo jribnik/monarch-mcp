@@ -38,7 +38,7 @@ CLIENT_MODULES = [
 ]
 
 # The complete tool surface: 17 read-side tools (incl. the preview_transaction_rule
-# dry-run) + 30 write tools. Registering or dropping a tool must be a conscious
+# dry-run) + 31 write tools. Registering or dropping a tool must be a conscious
 # edit here (this is an exact-equality check, not a subset check).
 EXPECTED_READ_TOOLS = {
     "list_accounts", "get_categories", "get_tags", "get_budgets",
@@ -50,6 +50,7 @@ EXPECTED_READ_TOOLS = {
 }
 EXPECTED_WRITE_TOOLS = {
     "recategorize_transaction", "update_transaction", "set_transaction_tags",
+    "bulk_update_transactions",
     "create_tag", "update_tag", "delete_tag",
     "create_transaction_rule", "update_transaction_rule", "delete_transaction_rule",
     "mark_stream_as_not_recurring", "create_transaction", "delete_transaction",
@@ -147,7 +148,7 @@ def test_server_registers_exactly_the_expected_tools():
     names = [t.name for t in _tools()]
     assert len(names) == len(set(names)), "duplicate tool registration"
     assert set(names) == EXPECTED_TOOLS
-    assert len(EXPECTED_READ_TOOLS) == 17 and len(EXPECTED_WRITE_TOOLS) == 30
+    assert len(EXPECTED_READ_TOOLS) == 17 and len(EXPECTED_WRITE_TOOLS) == 31
 
 
 def test_server_instructions_describe_the_workflow_and_name_key_tools():
