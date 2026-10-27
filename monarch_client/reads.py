@@ -277,19 +277,26 @@ async def get_account_type_options() -> dict[str, Any]:
 
 
 async def get_merchants(
-    search: Optional[str] = None, limit: int = 100, include_zero_txn: bool = False
+    search: Optional[str] = None,
+    limit: int = 100,
+    include_zero_txn: bool = False,
+    offset: int = 0,
 ) -> dict[str, Any]:
     """Promotes the hand-written Common_SearchMerchantsByName (previously only
     update_merchant's duplicate-name pre-check) to a public read. `search` is
-    a substring match on the merchant name; None/"" lists merchants. No
-    offset is exposed, so `truncated` in the result means "narrow the search"."""
+    a substring match on the merchant name; None/"" lists merchants (order is
+    server-defined without `search`). Page with `offset`; when
+    `more_may_exist` the result carries `next_offset`."""
     if limit < 1:
         raise ValueError("limit must be >= 1")
-    variables: dict[str, Any] = {"limit": limit, "offset": 0}
+    if offset < 0:
+        raise ValueError("offset must be >= 0")
+    variables: dict[str, Any] = {"limit": limit, "offset": offset}
     if search:
         variables["search"] = search.strip()
     data = await _call("Common_SearchMerchantsByName", variables)
-    return project.merchants(data, limit=limit, include_zero_txn=include_zero_txn)
+    return project.merchants(data, limit=limit, include_zero_txn=include_zero_txn,
+                             offset=offset)
 
 
 _INTERVALS = ("auto", "day", "week", "month")
@@ -307,9 +314,13 @@ async def get_net_worth_history(
 ) -> dict[str, Any]:
     """Common_GetAggregateSnapshots, downsampled client-side. auto = day for
     spans <= 60 days, week for <= 1 year, else month. end_date defaults to
-    today. The server's own adaptive granularity may already return coarser
-    points for long ranges, so "day" over a long span can still come back
-    coarser."""
+    today. The request's endDate is sent ONLY when end_date is given and is not
+    today (the web app always sends null; a concrete endDate was never
+    observed), otherwise null. The server's adaptive granularity
+    (useAdaptiveGranularity) may return coarser points than `interval` for
+    long ranges, so "day" over a long span can still come back coarser; each
+    returned point is labelled with its own snapshot date, not a bucket
+    boundary."""
     if interval not in _INTERVALS:
         raise ValueError(f"interval={interval!r} must be one of {list(_INTERVALS)}")
     start = _parse_day(start_date, "start_date")
@@ -324,7 +335,9 @@ async def get_net_worth_history(
         {
             "filters": {
                 "startDate": start.isoformat(),
-                "endDate": end.isoformat(),
+                "endDate": (
+                    end.isoformat() if end_date and end != date.today() else None
+                ),
                 "useAdaptiveGranularity": True,
             }
         },
@@ -351,6 +364,7 @@ async def get_businesses() -> dict[str, Any]:
     return project.businesses(data)
 
 
-async def get_goals() -> dict[str, Any]:
+async def get_goals(include_archived: bool = False) -> dict[str, Any]:
+    """Savings goals; archived goals are excluded unless include_archived."""
     data = await _call("Common_SavingsGoalsWithThisMonthBalances", {})
-    return project.goals(data)
+    return project.goals(data, include_archived=include_archived)

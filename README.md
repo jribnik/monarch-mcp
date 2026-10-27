@@ -132,12 +132,12 @@ Then restart Claude Code so it connects. Ask things like:
 | `preview_transaction_rule` | read (write-adjacent) | dry-run a rule's match set |
 | `get_recurring_transactions` | read | recurring transaction streams |
 | `get_account_type_options` | read | valid type/subtype pairs for create_manual_account |
-| `get_merchants` | read | merchants (id, name, transaction_count) with optional name `search`; zero-transaction merchants hidden unless `include_zero_txn`; `truncated` flags a full page |
-| `get_net_worth_history` | read | net worth / assets / liabilities over a date range, downsampled (`interval` auto/day/week/month; auto = day <=60d, week <=1y, else month); totals only |
+| `get_merchants` | read | merchants (id, name, transaction_count) with optional name `search`; zero-transaction merchants hidden unless `include_zero_txn`; pages with `offset`; returns `count`, `fetched`, `more_may_exist` (full page, computed before the zero-txn filter) and `next_offset`; order is server-defined without `search` |
+| `get_net_worth_history` | read | net worth / assets / liabilities over a date range, downsampled (`interval` auto/day/week/month; auto = day <=60d, week <=1y, else month); totals only; `endDate` sent only for a non-today `end_date`; server adaptive granularity may return coarser points than `interval` |
 | `get_credit_score_history` | read | credit score snapshots in a date range (date, score, user display name only) |
 | `get_household_members` | read | household members (id, name, role, `is_me`) |
 | `get_businesses` | read | business entities with linked accounts and counts |
-| `get_goals` | read | savings goals: balance, target, progress, contribution, forecast, allocations |
+| `get_goals` | read | savings goals: balance, target, progress, contribution, forecast, allocations; archived goals excluded unless `include_archived` |
 | `recategorize_transaction` | **write** | set a transaction's category |
 | `update_transaction` | **write** | edit merchant/amount/date/notes/flags; `reviewed=True` = Mark as reviewed |
 | `set_transaction_tags` | **write** | replace a transaction's tags |

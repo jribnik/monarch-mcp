@@ -315,18 +315,25 @@ async def get_merchants(
     search: Optional[str] = None,
     limit: int = 100,
     include_zero_txn: bool = False,
+    offset: int = 0,
 ) -> dict[str, Any]:
     """
     List merchants (id, name, transaction_count). search is a substring match
-    on the merchant name; omit it to list merchants. Merchants with no
-    transactions are hidden unless include_zero_txn=True. If `truncated` is
-    true the page was full and more may exist -- narrow `search` (there is no
-    offset). Useful for finding duplicate merchants (see the merge convention in
-    the server instructions) and for the exact name to pass to update_merchant /
-    set_merchant_name.
+    on the merchant name; without it the order is server-defined (not
+    alphabetical or by count). Merchants with no transactions are hidden unless
+    include_zero_txn=True. Returns count (rows returned), fetched (raw page
+    size before the zero-txn filter) and more_may_exist (a full page was
+    fetched, so more may exist -- computed before the filter). When true,
+    next_offset is the offset to pass for the next page. Useful for finding
+    duplicate merchants (see the merge convention in the server instructions)
+    and for the exact name to use when renaming: change a transaction's
+    merchant via update_transaction, or set a merchant name from a rule via
+    create_transaction_rule / update_transaction_rule (set_merchant_name is a
+    rule parameter, not a standalone tool); update_merchant edits the merchant
+    itself.
     """
     return await client_reads.get_merchants(
-        search=search, limit=limit, include_zero_txn=include_zero_txn
+        search=search, limit=limit, include_zero_txn=include_zero_txn, offset=offset
     )
 
 
@@ -338,8 +345,10 @@ async def get_net_worth_history(
     Net worth over time (net_worth, assets, liabilities per point). Dates are
     'YYYY-MM-DD'; end_date defaults to today. interval is "auto", "day", "week"
     or "month" and downsamples to the last value of each period; auto = day for
-    spans <= 60 days, week for <= 1 year, else month. Totals only, no
-    per-account breakdown.
+    spans <= 60 days, week for <= 1 year, else month. The server's adaptive
+    granularity may return coarser points than `interval` on long ranges; each
+    point is labelled with its own snapshot date (not a bucket boundary). Totals
+    only, no per-account breakdown.
     """
     return await client_reads.get_net_worth_history(
         start_date=start_date, end_date=end_date, interval=interval
@@ -371,12 +380,13 @@ async def get_businesses() -> dict[str, Any]:
 
 
 @mcp.tool()
-async def get_goals() -> dict[str, Any]:
+async def get_goals(include_archived: bool = False) -> dict[str, Any]:
     """
     List savings goals (balance, target, progress, monthly contribution,
     forecast, per-account allocation) plus this month's total goal balance.
+    Archived goals are excluded unless include_archived=True.
     """
-    return await client_reads.get_goals()
+    return await client_reads.get_goals(include_archived=include_archived)
 
 
 @mcp.tool()
@@ -898,8 +908,10 @@ async def split_transaction(
     `errors` in the result; use unsplit_transaction to undo.
 
     dry_run=True sends nothing (works even with writes disabled): it returns
-    {transaction_amount, current_splits, proposed_splits, sum_ok} so you can
-    check the amounts sum before committing."""
+    {transaction_amount, is_split, current_splits, proposed_splits, sum_ok} so you
+    can check the amounts sum before committing. proposed_splits is the exact
+    payload that would be sent (unknown keys rejected as in a real call) showing
+    the EFFECTIVE category/merchant (flagged *_inherited when taken from the parent)."""
     return await client_writes_splits_rules.split_transaction(
         transaction_id=transaction_id, splits=splits, dry_run=dry_run)
 
@@ -910,7 +922,8 @@ async def unsplit_transaction(
 ) -> dict[str, Any]:
     """Remove a transaction's split, restoring a single transaction (WRITE).
     dry_run=True only returns the current splits and sends nothing (works even
-    with writes disabled)."""
+    with writes disabled); on a transaction that is not split it returns
+    noop: true, is_split: false."""
     return await client_writes_splits_rules.unsplit_transaction(
         transaction_id=transaction_id, dry_run=dry_run)
 

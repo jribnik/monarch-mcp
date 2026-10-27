@@ -118,14 +118,16 @@ def tags(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def merchants(
-    data: dict[str, Any], limit: int, include_zero_txn: bool = False
+    data: dict[str, Any], limit: int, include_zero_txn: bool = False, offset: int = 0
 ) -> dict[str, Any]:
     """Compact merchant list from Common_SearchMerchantsByName's
     `merchants[]` (the hand-written op selects only id/name/transactionCount,
     so that is all there is to project). Merchants with no transactions are
-    dropped unless include_zero_txn. `truncated` is True when the server
-    returned a full page (len == limit), i.e. more matches may exist -- the
-    op has no totalCount; it is computed BEFORE the zero-txn filter."""
+    dropped unless include_zero_txn. `fetched` is the raw page size (before
+    the zero-txn filter); `count` is what is returned. `more_may_exist` is
+    True when the server returned a full page (fetched >= limit) -- the op has
+    no totalCount; it is computed BEFORE the zero-txn filter. `next_offset`
+    (offset + fetched) is set only when more_may_exist, else None."""
     rows = data.get("merchants") or []
     kept = [
         {
@@ -136,10 +138,13 @@ def merchants(
         for m in rows
         if include_zero_txn or (m.get("transactionCount") or 0) > 0
     ]
+    more = len(rows) >= limit
     return {
         "merchants": kept,
         "count": len(kept),
-        "truncated": len(rows) >= limit,
+        "fetched": len(rows),
+        "more_may_exist": more,
+        "next_offset": offset + len(rows) if more else None,
     }
 
 
@@ -158,7 +163,8 @@ def net_worth_history(data: dict[str, Any], interval: str) -> dict[str, Any]:
     liabilitiesBalance) and downsample to `interval` ("day"/"week"/"month")
     by keeping the LAST snapshot of each bucket (its end-of-period value).
     `interval` must already be resolved (not "auto"); see
-    reads.get_net_worth_history. Output is oldest-first."""
+    reads.get_net_worth_history. Output is oldest-first; each point carries
+    the date of its own (last) snapshot in the bucket, not the bucket edge."""
     snaps = sorted(
         (s for s in data.get("aggregateSnapshots") or [] if s.get("date")),
         key=lambda s: s["date"],
@@ -242,12 +248,15 @@ def businesses(data: dict[str, Any]) -> dict[str, Any]:
     return {"businesses": out}
 
 
-def goals(data: dict[str, Any]) -> dict[str, Any]:
+def goals(data: dict[str, Any], include_archived: bool = False) -> dict[str, Any]:
     """`savingsGoals[]` (GoalSummaryFields) compacted to the figures a person
     reads on the Goals page, plus each goal's per-account allocation and the
-    two household-level balances. Image/logo/icon fields are dropped."""
+    two household-level balances. Image/logo/icon fields are dropped.
+    Archived goals (archivedAt set) are skipped unless include_archived."""
     out = []
     for g in data.get("savingsGoals") or []:
+        if g.get("archivedAt") is not None and not include_archived:
+            continue
         out.append(
             {
                 "id": g.get("id"),
@@ -416,27 +425,53 @@ def transaction_details(data: dict[str, Any]) -> dict[str, Any]:
 
 def split_dry_run(
     txn: dict[str, Any],
-    proposed: list[dict[str, Any]],
+    split_data: list[dict[str, Any]],
     sum_ok: bool,
 ) -> dict[str, Any]:
-    """Preview shape for split_transaction/unsplit_transaction(dry_run=True):
-    the transaction's amount, its CURRENT splits (compacted from the drawer's
-    `splitTransactions`), the splits that would be sent, and whether they sum
-    exactly to the amount. `proposed` is already in tool-argument form."""
-    return {
+    """Preview shape for split_transaction/unsplit_transaction(dry_run=True).
+    `split_data` is the exact list `_split_item` builds for the real mutation
+    (camelCase wire form). proposed_splits shows the EFFECTIVE category and
+    merchant: an omitted one is inherited from the parent (verified live), so
+    it is reported with the parent's id/name and `*_inherited: true`.
+
+    Unsplit (`split_data == []` and the transaction not split) is a noop:
+    `noop: true`, `is_split: false`; nothing would be sent to change anything."""
+    parent_cat = txn.get("category") or {}
+    parent_mer = txn.get("merchant") or {}
+    current = [
+        {
+            "id": s.get("id"),
+            "amount": s.get("amount"),
+            "merchant": (s.get("merchant") or {}).get("name"),
+            "category": (s.get("category") or {}).get("name"),
+        }
+        for s in txn.get("splitTransactions") or []
+    ]
+    proposed = []
+    for d in split_data:
+        cat_inh = d.get("categoryId") is None
+        mer_inh = d.get("merchantName") is None
+        proposed.append({
+            "amount": d.get("amount"),
+            "category_id": parent_cat.get("id") if cat_inh else d["categoryId"],
+            "category_name": parent_cat.get("name") if cat_inh else None,
+            "category_inherited": cat_inh,
+            "merchant_name": parent_mer.get("name") if mer_inh else d["merchantName"],
+            "merchant_inherited": mer_inh,
+            "hide_from_reports": d.get("hideFromReports"),
+        })
+    out: dict[str, Any] = {
         "transaction_amount": txn.get("amount"),
-        "current_splits": [
-            {
-                "id": s.get("id"),
-                "amount": s.get("amount"),
-                "merchant": (s.get("merchant") or {}).get("name"),
-                "category": (s.get("category") or {}).get("name"),
-            }
-            for s in txn.get("splitTransactions") or []
-        ],
+        "is_split": bool(current),
+        "current_splits": current,
         "proposed_splits": proposed,
         "sum_ok": sum_ok,
     }
+    if not split_data and not current:
+        out["noop"] = True
+        out["note"] = "transaction is not split; unsplit would change nothing"
+        out["sum_ok"] = None
+    return out
 
 
 def recurring_transactions(data: dict[str, Any]) -> dict[str, Any]:

@@ -180,8 +180,11 @@ async def split_transaction(
     owned by a household member or business entity will not inherit that.
 
     dry_run=True does a fresh read of the transaction and returns
-    {transaction_amount, current_splits, proposed_splits, sum_ok} WITHOUT
-    sending the mutation; it works with the write gate closed, and a bad sum
+    {transaction_amount, is_split, current_splits, proposed_splits, sum_ok}
+    WITHOUT sending the mutation. proposed_splits is built from the exact
+    payload that would be sent (unknown keys are rejected just as in a real
+    call) and shows the EFFECTIVE category/merchant (inherited from the parent
+    when omitted, flagged category_inherited/merchant_inherited); it works with the write gate closed, and a bad sum
     is reported (sum_ok false) rather than raised."""
     if not dry_run:
         _require_writes("split_transaction")
@@ -210,35 +213,18 @@ async def split_transaction(
             f"({total}); got {[str(a) for a in amounts]} (mixed-sign splits "
             "are refused). NOT sending."
         )
+    parent_hide = bool(txn.get("hideFromReports") or False)
+    split_data = [
+        _split_item(s, i, a, parent_hide) for i, (s, a) in enumerate(zip(splits, amounts))
+    ]
     if dry_run:
-        return project.split_dry_run(
-            txn,
-            [
-                {
-                    "amount": float(a),
-                    "category_id": s.get("category_id"),
-                    "merchant_name": s.get("merchant_name"),
-                    "hide_from_reports": (
-                        bool(txn.get("hideFromReports") or False)
-                        if s.get("hide_from_reports") is None
-                        else bool(s["hide_from_reports"])
-                    ),
-                }
-                for s, a in zip(splits, amounts)
-            ],
-            sum(amounts) == total,
-        )
+        return project.split_dry_run(txn, split_data, sum(amounts) == total)
     if sum(amounts) != total:
         raise ValueError(
             f"splits sum to {sum(amounts)} but the transaction's amount is "
             f"{total} -- they must match exactly (amounts are signed like the "
             "transaction: a debit/expense is negative). NOT sending."
         )
-
-    parent_hide = bool(txn.get("hideFromReports") or False)
-    split_data = [
-        _split_item(s, i, a, parent_hide) for i, (s, a) in enumerate(zip(splits, amounts))
-    ]
     data = await _call(
         "Common_SplitTransactionMutation",
         {"input": {"transactionId": transaction_id, "splitData": split_data}},
@@ -252,8 +238,9 @@ async def unsplit_transaction(
     """Remove a transaction's split (splitData [], as the web app sends).
 
     dry_run=True reads the transaction fresh and returns its current splits
-    (proposed_splits is [], sum_ok true) without sending the mutation; works
-    with the write gate closed."""
+    (proposed_splits is []) without sending the mutation; works with the write
+    gate closed. If the transaction is not split, returns noop: true and
+    is_split: false (nothing to undo)."""
     if dry_run:
         details = await reads.get_transaction_details(transaction_id)
         txn = details.get("getTransaction")

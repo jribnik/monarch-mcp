@@ -173,17 +173,49 @@ async def test_split_dry_run_reports_without_mutation(fake):
     assert [op for op, _ in fake.calls] == ["Web_GetTransactionDrawer"]
     assert result == {
         "transaction_amount": -12.34,
+        "is_split": True,
         "current_splits": [
             {"id": "s1", "amount": -12.34, "merchant": "Costco", "category": "Groceries"}
         ],
         "proposed_splits": [
-            {"amount": -6.0, "category_id": None, "merchant_name": None,
-             "hide_from_reports": False},
-            {"amount": -6.34, "category_id": "c2", "merchant_name": None,
-             "hide_from_reports": False},
+            {"amount": -6.0, "category_id": None, "category_name": None,
+             "category_inherited": True, "merchant_name": None,
+             "merchant_inherited": True, "hide_from_reports": False},
+            {"amount": -6.34, "category_id": "c2", "category_name": None,
+             "category_inherited": False, "merchant_name": None,
+             "merchant_inherited": True, "hide_from_reports": False},
         ],
         "sum_ok": True,
     }
+
+
+@pytest.mark.asyncio
+async def test_split_dry_run_shows_effective_inherited_values(fake):
+    t = _txn(-10)
+    t["getTransaction"]["category"] = {"id": "cp", "name": "Groceries"}
+    t["getTransaction"]["merchant"] = {"id": "mp", "name": "Costco"}
+    t["getTransaction"]["hideFromReports"] = True
+    fake.responses["Web_GetTransactionDrawer"] = t
+    result = await w.split_transaction(
+        "t1", [{"amount": -4, "merchant_name": "Other"}, {"amount": -6}], dry_run=True
+    )
+    a, b = result["proposed_splits"]
+    assert (a["merchant_name"], a["merchant_inherited"]) == ("Other", False)
+    assert (a["category_id"], a["category_name"], a["category_inherited"]) == (
+        "cp", "Groceries", True)
+    assert (b["merchant_name"], b["merchant_inherited"]) == ("Costco", True)
+    assert b["hide_from_reports"] is True
+
+
+@pytest.mark.asyncio
+async def test_split_dry_run_rejects_unknown_keys_like_real_call(fake):
+    fake.responses["Web_GetTransactionDrawer"] = _txn(-2)
+    bad = [{"amount": -1, "categoryId": "c"}, {"amount": -1}]
+    with pytest.raises(ValueError, match="unknown keys"):
+        await w.split_transaction("t1", bad, dry_run=True)
+    fake.responses["Common_SplitTransactionMutation"] = SPLIT_OK
+    with pytest.raises(ValueError, match="unknown keys"):
+        await w.split_transaction("t1", bad)
 
 
 @pytest.mark.asyncio
@@ -230,11 +262,21 @@ async def test_unsplit_dry_run_reads_only_and_works_with_gate_closed(gate_closed
     assert [op for op, _ in gate_closed.calls] == ["Web_GetTransactionDrawer"]
     assert result["transaction_amount"] == -2
     assert result["proposed_splits"] == [] and result["sum_ok"] is True
+    assert result["is_split"] is True and "noop" not in result
     assert [s["id"] for s in result["current_splits"]] == ["s1", "s2"]
     assert result["current_splits"][1]["merchant"] == "M"
     gate_closed.responses["Web_GetTransactionDrawer"] = {"getTransaction": None}
     with pytest.raises(ValueError, match="wasn't found"):
         await w.unsplit_transaction("nope", dry_run=True)
+
+
+@pytest.mark.asyncio
+async def test_unsplit_dry_run_on_unsplit_transaction_is_noop(gate_closed):
+    gate_closed.responses["Web_GetTransactionDrawer"] = _txn(-2)
+    result = await w.unsplit_transaction("t1", dry_run=True)
+    assert result["noop"] is True and result["is_split"] is False
+    assert result["sum_ok"] is None
+    assert result["current_splits"] == [] and result["proposed_splits"] == []
 
 
 def _existing_rule(**over):

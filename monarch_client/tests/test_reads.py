@@ -252,7 +252,9 @@ async def test_get_merchants_compact_projection_and_defaults(fake_client):
     assert result == {
         "merchants": [{"id": "m1", "name": "Costco", "transaction_count": 12}],
         "count": 1,
-        "truncated": False,
+        "fetched": 2,
+        "more_may_exist": False,
+        "next_offset": None,
     }
 
 
@@ -270,7 +272,23 @@ async def test_get_merchants_search_and_include_zero(fake_client):
     ]
     assert [m["id"] for m in result["merchants"]] == ["m1", "m2"]
     # a full page (len == limit) means more may exist
-    assert result["truncated"] is True and result["count"] == 2
+    assert result["more_may_exist"] is True and result["count"] == 2
+    assert result["next_offset"] == 2 and "truncated" not in result
+
+
+@pytest.mark.asyncio
+async def test_get_merchants_offset_is_sent_and_advances(fake_client):
+    fake_client.responses["Common_SearchMerchantsByName"] = {
+        "merchants": [{"id": "m1", "name": "A", "transactionCount": 1},
+                      {"id": "m2", "name": "B", "transactionCount": 1}]
+    }
+    result = await reads.get_merchants(limit=2, offset=40)
+    assert fake_client.calls == [
+        ("Common_SearchMerchantsByName", {"limit": 2, "offset": 40})
+    ]
+    assert result["next_offset"] == 42
+    with pytest.raises(ValueError):
+        await reads.get_merchants(offset=-1)
 
 
 @pytest.mark.asyncio
@@ -282,7 +300,8 @@ async def test_get_merchants_truncated_is_computed_before_zero_filter(fake_clien
         ]
     }
     result = await reads.get_merchants(limit=2)
-    assert result == {"merchants": [], "count": 0, "truncated": True}
+    assert result == {"merchants": [], "count": 0, "fetched": 2,
+                      "more_may_exist": True, "next_offset": 2}
 
 
 @pytest.mark.asyncio
@@ -363,8 +382,12 @@ async def test_net_worth_explicit_interval_default_end_and_validation(fake_clien
     monkeypatch.setattr(reads, "date", _FixedDate)
     fake_client.responses["Common_GetAggregateSnapshots"] = {"aggregateSnapshots": None}
     result = await reads.get_net_worth_history("2026-03-01", interval="month")
-    assert fake_client.calls[0][1]["filters"]["endDate"] == "2026-03-15"
+    # defaulted end_date -> endDate is null (what the app sends)
+    assert fake_client.calls[0][1]["filters"]["endDate"] is None
     assert result == {"interval": "month", "points": [], "count": 0}
+    # explicit end_date equal to today -> also null
+    await reads.get_net_worth_history("2026-03-01", "2026-03-15")
+    assert fake_client.calls[1][1]["filters"]["endDate"] is None
     for kwargs in (
         {"start_date": "03/01/2026"},
         {"start_date": "2026-03-01", "interval": "hour"},
@@ -491,8 +514,10 @@ async def test_get_goals_compact(fake_client):
         "goalsBalanceThisMonth": 25.0,
         "currentTotalBalanceForGoals": 500.0,
     }
-    result = await reads.get_goals()
+    default = await reads.get_goals()
     assert fake_client.calls == [("Common_SavingsGoalsWithThisMonthBalances", {})]
+    assert [g["id"] for g in default["goals"]] == ["g1"]
+    result = await reads.get_goals(include_archived=True)
     g1, g2 = result["goals"]
     assert g1["name"] == "Trip" and g1["target_amount"] == 1000.0
     assert g1["allocations"] == [{"account": "Savings", "amount": 500.0}]
