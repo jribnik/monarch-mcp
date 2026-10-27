@@ -8,7 +8,7 @@ budgets, etc. Built to replace Monarch's own MCP server, which has been offline.
 Built entirely on [`monarch_client`](monarch_client/) — a self-contained client
 against Monarch's real GraphQL API, using plain HTTP + vendored query text
 captured from the real web app by [api-recon](https://github.com/jribnik/api-recon).
-**41 tools: 11 read-side (including the write-adjacent `preview_transaction_rule`
+**42 tools: 12 read-side (including the write-adjacent `preview_transaction_rule`
 dry-run) and 30 write**. The write tools were captured and verified live against a
 dedicated, disposable `monarch-sandbox` Monarch account before ever touching the
 real one; **that account has since been deleted** (api-recon still registers a
@@ -132,6 +132,7 @@ Then restart Claude Code so it connects. Ask things like:
 | `preview_transaction_rule` | read (write-adjacent) | dry-run a rule's match set |
 | `get_recurring_transactions` | read | recurring transaction streams |
 | `get_account_type_options` | read | valid type/subtype pairs for create_manual_account |
+| `get_merchants` | read | merchants (id, name, transaction_count) with optional name `search`; zero-transaction merchants hidden unless `include_zero_txn`; pages with `offset`; returns `count`, `fetched`, `more_may_exist` (full page, computed before the zero-txn filter) and `next_offset`; order is server-defined without `search` |
 | `recategorize_transaction` | **write** | set a transaction's category |
 | `update_transaction` | **write** | edit merchant/amount/date/notes/flags; `reviewed=True` = Mark as reviewed |
 | `set_transaction_tags` | **write** | replace a transaction's tags |
@@ -270,7 +271,7 @@ touch the real `~/.monarch-mcp`. CI runs the same suite (`.github/workflows/test
 ## Layout
 
 ```
-server.py            FastMCP server (the 41 tools above, plus the workflow `instructions`
+server.py            FastMCP server (the 42 tools above, plus the workflow `instructions`
                      string sent to clients)
 monarch_client/      the client -- see monarch_client/__init__.py
   operations/        vendored GraphQL text + PROVENANCE (see its README.md)

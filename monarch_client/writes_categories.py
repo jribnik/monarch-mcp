@@ -124,8 +124,9 @@ PROVENANCE_ENTRIES: dict[str, dict] = {
     ),
     "Common_SearchMerchantsByName": _prov_hw(
         "c02d37ccd96bb624eef0db5706f2e052e944b5f2b636c261afa4189de0ecea09",
-        "backs update_merchant's duplicate-name pre-check. HAND-WRITTEN read-only "
-        "query merchants(search, limit, offset); verified live on monarch-sandbox",
+        "backs update_merchant's duplicate-name pre-check and the get_merchants "
+        "read tool. HAND-WRITTEN read-only query merchants(search, limit, "
+        "offset); verified live on monarch-sandbox",
     ),
 }
 

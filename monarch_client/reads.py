@@ -1,5 +1,5 @@
 """
-The 10 read-side MCP tools defined in this module (11 read-side tools at the
+The 11 read-side MCP tools defined in this module (12 read-side tools at the
 tool level: the README table also counts preview_transaction_rule, a dry-run
 that lives in writes.py), built on monarch_client; the legacy
 monarchmoney-enhanced backend they once ran alongside is gone.
@@ -174,3 +174,26 @@ async def get_account_type_options() -> dict[str, Any]:
     lists every valid (type.name, subtype.name) pair."""
     data = await _call("Common_GetAccountTypeOptions", {})
     return project.account_type_options(data)
+
+
+async def get_merchants(
+    search: Optional[str] = None,
+    limit: int = 100,
+    include_zero_txn: bool = False,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """Promotes the hand-written Common_SearchMerchantsByName (previously only
+    update_merchant's duplicate-name pre-check) to a public read. `search` is
+    a substring match on the merchant name; None/"" lists merchants (order is
+    server-defined without `search`). Page with `offset`; when
+    `more_may_exist` the result carries `next_offset`."""
+    if limit < 1:
+        raise ValueError("limit must be >= 1")
+    if offset < 0:
+        raise ValueError("offset must be >= 0")
+    variables: dict[str, Any] = {"limit": limit, "offset": offset}
+    if search:
+        variables["search"] = search.strip()
+    data = await _call("Common_SearchMerchantsByName", variables)
+    return project.merchants(data, limit=limit, include_zero_txn=include_zero_txn,
+                             offset=offset)
