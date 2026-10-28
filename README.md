@@ -8,7 +8,7 @@ budgets, etc. Built to replace Monarch's own MCP server, which has been offline.
 Built entirely on [`monarch_client`](monarch_client/) — a self-contained client
 against Monarch's real GraphQL API, using plain HTTP + vendored query text
 captured from the real web app by [api-recon](https://github.com/jribnik/api-recon).
-**48 tools: 17 read-side (including the write-adjacent `preview_transaction_rule`
+**49 tools: 18 read-side (including the write-adjacent `preview_transaction_rule`
 dry-run) and 31 write**. The write tools were captured and verified live against a
 dedicated, disposable `monarch-sandbox` Monarch account before ever touching the
 real one; **that account has since been deleted** (api-recon still registers a
@@ -279,7 +279,7 @@ touch the real `~/.monarch-mcp`. CI runs the same suite (`.github/workflows/test
 ## Layout
 
 ```
-server.py            FastMCP server (the 48 tools above, plus the workflow `instructions`
+server.py            FastMCP server (the 49 tools above, plus the workflow `instructions`
                      string sent to clients)
 monarch_client/      the client -- see monarch_client/__init__.py
   operations/        vendored GraphQL text + PROVENANCE (see its README.md)
