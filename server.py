@@ -253,6 +253,18 @@ async def get_recurring_transactions(
     )
 
 
+@mcp.tool(annotations=READ_ONLY)
+async def get_recurring_merchant_reviews() -> dict[str, Any]:
+    """
+    List recurring-stream candidates Monarch is waiting on Jake to confirm or
+    dismiss (the Recurring tab's "merchants for review" badge): streams whose
+    reviewStatus is 'pending', with a count. Confirmed streams are in
+    get_recurring_transactions. Read-only; this cannot confirm or dismiss one.
+    The pending-to-badge mapping is inferred from captured traffic.
+    """
+    return await client_reads.get_recurring_merchant_reviews()
+
+
 # --------------------------------------------------------------------------- #
 # Write tools
 # --------------------------------------------------------------------------- #

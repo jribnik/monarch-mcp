@@ -47,6 +47,24 @@ async def test_list_accounts_flattens_type_groups(fake_client):
 
 
 @pytest.mark.asyncio
+async def test_get_recurring_merchant_reviews_keeps_only_pending(fake_client):
+    fake_client.responses["Common_GetRecurringStreams"] = {
+        "recurringTransactionStreams": [
+            {"stream": {"id": "s1", "reviewStatus": "approved"}},
+            {"stream": {"id": "s2", "reviewStatus": "pending"}},
+            {"stream": {"id": "s3", "reviewStatus": "approved"}},
+        ]
+    }
+    result = await reads.get_recurring_merchant_reviews()
+    assert fake_client.calls == [
+        ("Common_GetRecurringStreams", {"includeLiabilities": True})
+    ]
+    assert result["pending_review_count"] == 1
+    assert [s["id"] for s in result["pending_streams"]] == ["s2"]
+    assert result["total_streams"] == 3
+
+
+@pytest.mark.asyncio
 async def test_get_categories_passthrough(fake_client):
     fake_client.responses["Common_GetCategories"] = {
         "categoryGroups": [{"id": "g1"}],

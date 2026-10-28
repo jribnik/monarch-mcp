@@ -131,6 +131,7 @@ Then restart Claude Code so it connects. Ask things like:
 | `get_transaction_rules` | read | auto-categorization rules |
 | `preview_transaction_rule` | read (write-adjacent) | dry-run a rule's match set |
 | `get_recurring_transactions` | read | recurring transaction streams |
+| `get_recurring_merchant_reviews` | read | streams pending review (the Recurring tab's "merchants for review" badge; mapping inferred from captured traffic) |
 | `get_account_type_options` | read | valid type/subtype pairs for create_manual_account |
 | `get_merchants` | read | merchants (id, name, transaction_count) with optional name `search`; zero-transaction merchants hidden unless `include_zero_txn`; pages with `offset`; returns `count`, `fetched`, `more_may_exist` (full page, computed before the zero-txn filter) and `next_offset`; order is server-defined without `search` |
 | `get_net_worth_history` | read | net worth / assets / liabilities over a date range, downsampled (`interval` auto/day/week/month; auto = day <=60d, week <=1y, else month); totals only; `endDate` sent only for a non-today `end_date`; server adaptive granularity may return coarser points than `interval` |
