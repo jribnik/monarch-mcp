@@ -545,6 +545,23 @@ def recurring_transactions(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def recurring_merchant_reviews(data: dict[str, Any]) -> dict[str, Any]:
+    """Keep only the streams whose `reviewStatus` is 'pending' (the candidates
+    the Recurring tab's "merchants for review" badge is inferred to count --
+    see operations/__init__.py's PROVENANCE note for Common_GetRecurringStreams),
+    alongside the total number of streams seen."""
+    streams = [
+        item.get("stream") or {}
+        for item in data.get("recurringTransactionStreams") or []
+    ]
+    pending = [s for s in streams if s.get("reviewStatus") == "pending"]
+    return {
+        "pending_review_count": len(pending),
+        "pending_streams": pending,
+        "total_streams": len(streams),
+    }
+
+
 def create_tag_result(data: dict[str, Any]) -> dict[str, Any]:
     """Pass-through: `createTransactionTag.{tag,errors}` matches the old
     library's shape exactly -- same operation name, same query, same

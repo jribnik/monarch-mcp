@@ -1,0 +1,48 @@
+# source: recon catalog for 'monarch', operation 'Common_GetRecurringStreams'
+# query_hash: 60ddcb5734f9c860e718e3bdb115d62ffbbe4dcc153903fd5ea5a88b7c58686a
+# observed in run(s): 2026-10-17T14-30-00Z
+# last_seen: 2026-10-17T14:31:08.562000+00:00
+# exported: 2026-10-28T00:00:00+00:00
+# NOT authoritative -- catalog is built from OBSERVED traffic, not a schema fetch.
+# Hand-copied from the catalog's `query_text` (artifacts/monarch/catalog/runs/
+# 2026-10-17T14-30-00Z.json), not via `recon export-ops`. The only literal is the
+# boolean `includePending: true`, which the catalog's redaction does not touch.
+
+query Common_GetRecurringStreams($includeLiabilities: Boolean) {
+  recurringTransactionStreams(
+    includePending: true
+    includeLiabilities: $includeLiabilities
+  ) {
+    stream {
+      id
+      reviewStatus
+      frequency
+      amount
+      baseDate
+      dayOfTheMonth
+      isApproximate
+      name
+      logoUrl
+      recurringType
+      merchant {
+        id
+        __typename
+      }
+      creditReportLiabilityAccount {
+        id
+        account {
+          id
+          __typename
+        }
+        lastStatement {
+          id
+          dueDate
+          __typename
+        }
+        __typename
+      }
+      __typename
+    }
+    __typename
+  }
+}

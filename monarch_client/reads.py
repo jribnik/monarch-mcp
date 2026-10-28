@@ -272,6 +272,13 @@ async def get_recurring_transactions(
     return project.recurring_transactions(data)
 
 
+async def get_recurring_merchant_reviews() -> dict[str, Any]:
+    """Streams awaiting confirmation in the Recurring tab. Sends the same
+    `includeLiabilities: true` the web app does."""
+    data = await _call("Common_GetRecurringStreams", {"includeLiabilities": True})
+    return project.recurring_merchant_reviews(data)
+
+
 async def get_transaction_rules() -> dict[str, Any]:
     data = await _call("Web_GetTransactionRules", {})
     return project.transaction_rules(data)

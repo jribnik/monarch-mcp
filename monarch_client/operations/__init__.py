@@ -154,6 +154,22 @@ PROVENANCE: dict[str, dict] = {
         "hand_repaired": False,
         "note": "backs get_transaction_details",
     },
+    "Common_GetRecurringStreams": {
+        "catalog_query_hash": "60ddcb5734f9c860e718e3bdb115d62ffbbe4dcc153903fd5ea5a88b7c58686a",
+        "vendored_sha256": "17167d7248af4348d3c17c844aaf78b6fabcc56dcf2bcf6d89a50060314d554c",
+        "exported_at": "2026-10-28T00:00:00+00:00",
+        "runs_seen": ["2026-10-17T14-30-00Z"],
+        "hand_repaired": False,
+        "note": (
+            "backs get_recurring_merchant_reviews; called with variables "
+            "{'includeLiabilities': True} as the web app does. Query text was "
+            "copied from the catalog's query_text, not exported. UNVERIFIED "
+            "against a live badge: the captured responses show "
+            "stream.reviewStatus 'approved' x16 and 'pending' x2, which matches "
+            "the Recurring tab's '2 merchants for review' badge, but that "
+            "mapping is inferred from traffic."
+        ),
+    },
     "Common_GetAggregatedRecurringItems": {
         "catalog_query_hash": "ffac36c49702559901f3b65826cbc815b8d25436900820105824cf194178e797",
         "vendored_sha256": "53b69ab22e477d2e4b3ed65314ea480994687da88aafabe9b204022da7fbfab3",
